@@ -8,7 +8,7 @@ Environment=HOME=@HOME@ DISPLAY=:99
 # The credential (/etc/agentbox/ttyd.credential, written by configure.sh) is what the portal's /term/
 # proxy sends; it's visible in /proc/<pid>/cmdline to local users, which is accepted: it only has to
 # stop browsers that reach the port directly.
-ExecStart=/bin/sh -c 'exec /usr/bin/ttyd -i lo -p @TERMINAL_PORT@ -O -W -c "$$(cat /etc/agentbox/ttyd.credential)" -t fontSize=14 -t titleFixed=agentbox /bin/bash -l'
+ExecStart=/bin/sh -c 'exec /usr/bin/ttyd -i 127.0.0.1 -p @TERMINAL_PORT@ -O -W -c "$$(cat /etc/agentbox/ttyd.credential)" -t fontSize=14 -t titleFixed=agentbox /bin/bash -l'
 Restart=always
 
 [Install]
