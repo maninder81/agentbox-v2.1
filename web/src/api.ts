@@ -356,8 +356,11 @@ export type HostedService = {
   room_id: string; created_at: string; stopped_at: string | null; stop_reason: string | null;
 };
 
+/** The parallel-tasks choice on a role's page; the server's values arrive with GET /api/state. */
+export const roleLimits = { per_role: 5, max_replicas: 6 };
+
 export const api = {
-  state: () => call<{ agents: Agent[]; crews?: Crew[]; usage: Usage | null; groups: Group[]; paused: boolean; display: DisplayHolder; retired: RetiredAgent[]; roots?: { agents: string; work: string } }>("GET", "/api/state"),
+  state: () => call<{ agents: Agent[]; crews?: Crew[]; usage: Usage | null; groups: Group[]; paused: boolean; display: DisplayHolder; retired: RetiredAgent[]; roots?: { agents: string; work: string }; limits?: { per_role: number; max_replicas: number } }>("GET", "/api/state"),
   fileInfo: (path: string) => call<Pick<DocumentInfo, "path" | "name" | "folder" | "size" | "modified">>("GET", `/api/file/info?path=${encodeURIComponent(path)}`),
   work: () => call<{ live: WorkRoom[]; done: WorkRoom[] }>("GET", "/api/work"),
   newTask: (roleId: string, text: string, title?: string, images?: string[], repos?: string[], requirePlan?: boolean, links?: string[]) =>

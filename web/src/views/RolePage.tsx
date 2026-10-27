@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Agent } from "../api.ts";
+import { api, roleLimits, type Agent } from "../api.ts";
 import { useStore } from "../store.tsx";
 import { Avatar, Icon, Markdown, StatusGlyph, relTime } from "../components/ui.tsx";
 import { STATE_LABEL, STATE_STEP, STEP_ICON } from "../components/Setup.tsx";
@@ -129,9 +129,9 @@ function RoleSettings({ role }: { role: Agent }) {
       </div>
       <div className="field">
         <label htmlFor="rs-cap">Tasks another agent may run at once</label>
-        <select id="rs-cap" className="text" style={{ maxWidth: 120 }} value={role.max_replicas || 5}
+        <select id="rs-cap" className="text" style={{ maxWidth: 120 }} value={role.max_replicas || roleLimits.per_role}
           onChange={(e) => patch({ max_replicas: Number(e.target.value) })}>
-          {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+          {Array.from({ length: roleLimits.max_replicas }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
         <span className="hint">For example, how many {role.name} tasks one tech-lead task can have going in parallel. Your own tasks aren't limited.</span>
       </div>

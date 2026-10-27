@@ -1,7 +1,7 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { get } from "./db.ts";
-import { getAgent, type Agent } from "./agents.ts";
+import { DEFAULT_PER_CREATOR, MAX_REPLICAS, getAgent, type Agent } from "./agents.ts";
 import {
   integrationAction, integrationStatus, listIntegrations, rolesFor, saveSettings, settingText, type Integration,
 } from "./integrations.ts";
@@ -401,7 +401,7 @@ export function setupTools(agent: Agent, taskId: string) {
           skills: z.array(z.string()).optional().describe("existing skills to give it"),
           integrations: z.array(z.string()).optional().describe("integration ids it may use, e.g. github"),
           repos: z.array(z.string()).optional().describe("repos it may work in (only matters for repos limited to some agents)"),
-          max_replicas: z.number().int().optional().describe("parallel tasks per starter, 0–6 (0 = default 5)"),
+          max_replicas: z.number().int().optional().describe(`parallel tasks per starter, 0–${MAX_REPLICAS} (0 = default ${DEFAULT_PER_CREATOR})`),
           can_scale: z.boolean().optional().describe("true for a lead that starts other agents' tasks; only the owner starts a lead's work"),
           crew: z.string().optional().describe("the crew it joins (team overview lists them); it then works only with that crew's agents"),
           reason: z.string().optional(),
@@ -422,7 +422,7 @@ export function setupTools(agent: Agent, taskId: string) {
           title: z.string().optional(), summary: z.string().optional(),
           model: z.enum(["opus", "sonnet", "haiku"]).optional(),
           max_turns: z.number().int().optional().describe("steps per turn, 5–500"),
-          max_replicas: z.number().int().optional().describe("parallel tasks per starter, 0–6"),
+          max_replicas: z.number().int().optional().describe(`parallel tasks per starter, 0–${MAX_REPLICAS}`),
           can_scale: z.boolean().optional().describe("a lead that starts other agents' tasks"),
           add_skills: z.array(z.string()).optional(), remove_skills: z.array(z.string()).optional(),
           add_integrations: z.array(z.string()).optional(), remove_integrations: z.array(z.string()).optional(),

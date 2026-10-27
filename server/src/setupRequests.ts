@@ -57,7 +57,6 @@ export type SetupRequest = {
   attention_id: string | null; created_at: string; updated_at: string; decided_at: string | null; completed_at: string | null;
 };
 export const OPEN: RequestStatus[] = ["pending", "in_progress"];
-export const MAX_OPEN_PER_INSTANCE = 3;
 
 export const getRequest = (id: string) => get<SetupRequest>(`SELECT * FROM setup_requests WHERE id = ?`, id);
 export const waitersOf = (id: string) =>
@@ -150,12 +149,6 @@ export function requestSetup(agent: Agent, taskId: string | null, input: Request
     ? get<SetupRequest>(`SELECT * FROM setup_requests WHERE ${open("")} AND repo = ? ORDER BY created_at LIMIT 1`, v.repo)
     : undefined;
   if (same && get(`SELECT 1 FROM setup_request_waiters WHERE request_id = ? AND instance_id = ?`, same.id, agent.id)) return { request: same, joined: true };
-  const mine = (get<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM setup_requests r JOIN setup_request_waiters w ON w.request_id = r.id WHERE w.instance_id = ? AND r.${open("")}`, agent.id,
-  )?.n ?? 0) as number;
-  if (mine >= MAX_OPEN_PER_INSTANCE) {
-    throw new Error(`You already have ${mine} open setup requests (the limit is ${MAX_OPEN_PER_INSTANCE}). Wait for those, or report what's blocked.`);
-  }
   if (same) {
     addWaiter(same.id, agent, taskId, threadId);
     run(`UPDATE setup_requests SET updated_at = ? WHERE id = ?`, now(), same.id);

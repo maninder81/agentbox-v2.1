@@ -50,6 +50,12 @@ export type Config = {
   mobile: { serve_port: number };
   /** Hosted services' link: https://<node>.ts.net:<serve_port>/<name>/ (tailscale serve: 443, 8443 or 10000). */
   hosting: { serve_port: number };
+  /**
+   * How much work runs at once. running_turns: agent turns in flight across all agents (each is a
+   * Claude process; AGENTBOX_MAX_RUNNING still wins). per_role: live tasks of one role an agent may
+   * start (role.max_replicas overrides, up to this or 6, whichever is larger).
+   */
+  limits: { running_turns: number; per_role: number };
   /** Where this config came from: a file path, or "defaults". */
   source: string;
 };
@@ -77,6 +83,7 @@ const FILE_DEFAULTS: Omit<Config, "source"> = {
   owner: { tailscale_login: "", email: "" },
   mobile: { serve_port: 8443 },
   hosting: { serve_port: 10000 },
+  limits: { running_turns: 10, per_role: 10 },
 };
 
 /** No config file: today's behaviour (everything on, data next to the server). */
@@ -111,6 +118,12 @@ function bool(v: unknown, fallback: boolean, key: string) {
   if (typeof v !== "boolean") throw new Error(`config: ${key} must be true or false`);
   return v;
 }
+function count(v: unknown, fallback: number, key: string) {
+  if (v === undefined || v === null) return fallback;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error(`config: limits.${key} must be a whole number from 1 to 100`);
+  return n;
+}
 
 /** Merge a parsed file over the defaults, validating as we go. Unknown keys are ignored. */
 export function fromObject(raw: unknown, base: Omit<Config, "source"> = FILE_DEFAULTS): Omit<Config, "source"> {
@@ -138,6 +151,7 @@ export function fromObject(raw: unknown, base: Omit<Config, "source"> = FILE_DEF
   if (isObj(raw.owner)) for (const k of ["tailscale_login", "email"] as const) c.owner[k] = str(raw.owner[k], c.owner[k]);
   if (isObj(raw.mobile)) c.mobile.serve_port = port(raw.mobile.serve_port, c.mobile.serve_port, "mobile.serve_port");
   if (isObj(raw.hosting)) c.hosting.serve_port = port(raw.hosting.serve_port, c.hosting.serve_port, "hosting.serve_port");
+  if (isObj(raw.limits)) for (const k of Object.keys(c.limits) as (keyof Config["limits"])[]) c.limits[k] = count(raw.limits[k], c.limits[k], k);
   for (const id of REQUIRED_MODULES) c.modules[id] = true;
   return c;
 }

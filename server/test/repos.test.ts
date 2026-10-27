@@ -477,7 +477,7 @@ test("setup tools: list_repos, add_repo as an approval card (applied on approve)
 });
 
 // --- setup requests ---------------------------------------------------------------------------------
-test("setup requests: created with a card and a needs-you item; dedupe joins waiters; at most 3 open", async () => {
+test("setup requests: created with a card and a needs-you item; dedupe joins waiters; no cap on open ones", async () => {
   const a1 = task(coder.id, "Needs GCP 1");
   const a2 = task(writer.id, "Needs GCP 2");
   const t1 = fakeTask(a1.id);
@@ -494,10 +494,9 @@ test("setup requests: created with a card and a needs-you item; dedupe joins wai
   assert.equal(r2.request.id, r1.request.id);
   assert.deepEqual(SR.waitersOf(r1.request.id).map((w) => w.instance_id), [a1.id, a2.id]);
   assert.equal(attentionSeen.length, before + 1, "no second item");
-  // Rate limit.
-  SR.requestSetup(a1, t1, { title: "Tool A", for_setup_agent: "install a", check: "true" });
-  SR.requestSetup(a1, t1, { title: "Tool B", for_setup_agent: "install b", check: "true" });
-  assert.throws(() => SR.requestSetup(a1, t1, { title: "Tool C", for_setup_agent: "install c" }), /at most|limit is 3/);
+  // No limit on how many an agent has open.
+  for (const t of ["A", "B", "C", "D"]) SR.requestSetup(a1, t1, { title: `Tool ${t}`, for_setup_agent: `install ${t}`, check: "true" });
+  assert.equal(SR.listRequests({ status: "pending" }).filter((r) => r.title.startsWith("Tool ")).length, 4);
   // Validation and the role rule.
   assert.throws(() => SR.requestSetup(a2, null, { title: "", for_setup_agent: "x" }), /title/);
   assert.throws(() => SR.requestSetup(a2, null, { title: "x", for_setup_agent: "x", check: "a\nb" }));

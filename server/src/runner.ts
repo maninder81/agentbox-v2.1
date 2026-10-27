@@ -53,9 +53,9 @@ export const currentUsage = () => usage;
 
 const chains = new Map<string, Promise<void>>();
 
-// At most this many turns run at once across all agents: each running turn is a Claude process
-// (plus a browser bridge) in a 6 GB VM. Idle instances cost nothing.
-const MAX_RUNNING = Number(process.env.AGENTBOX_MAX_RUNNING ?? 6);
+// At most this many turns run at once across all agents (config limits.running_turns): each running
+// turn is a Claude process (plus a browser bridge), so size it to the VM's memory. Idle instances cost nothing.
+const MAX_RUNNING = Number(process.env.AGENTBOX_MAX_RUNNING ?? config.limits.running_turns);
 let runningTurns = 0;
 const waitingForSlot: (() => void)[] = [];
 async function withSlot(fn: () => Promise<void>) {

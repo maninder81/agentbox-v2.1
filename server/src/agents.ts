@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { all, get, newId, now, run } from "./db.ts";
 import { publish } from "./bus.ts";
-import { paths } from "./config.ts";
+import { config, paths } from "./config.ts";
 
 export const AGENTS_ROOT = paths.agents;
 export const WORK_ROOT = paths.work;
@@ -51,8 +51,10 @@ export type Agent = {
   crew_id?: string | null;
 };
 
-/** Per creator: how many live instances of one role an agent may run at once (role.max_replicas overrides). */
-export const DEFAULT_PER_CREATOR = 5;
+/** Per creator: how many live instances of one role an agent may run at once (config limits.per_role; role.max_replicas overrides). */
+export const DEFAULT_PER_CREATOR = config.limits.per_role;
+/** The highest role.max_replicas the owner may set. */
+export const MAX_REPLICAS = Math.max(6, DEFAULT_PER_CREATOR);
 /** Safety cap on live instances overall (VM memory and Claude usage). */
 export const MAX_LIVE_INSTANCES = 40;
 
@@ -157,8 +159,8 @@ export function updateAgent(
     throw new Error(`${a.name} is built in: its name and description can't change`);
   }
   if (patch.model && !MODELS.includes(patch.model as any)) throw new Error(`Unknown model ${patch.model}`);
-  if (patch.max_replicas !== undefined && !(Number.isInteger(patch.max_replicas) && patch.max_replicas >= 0 && patch.max_replicas <= 6)) {
-    throw new Error("Max replicas must be 0–6");
+  if (patch.max_replicas !== undefined && !(Number.isInteger(patch.max_replicas) && patch.max_replicas >= 0 && patch.max_replicas <= MAX_REPLICAS)) {
+    throw new Error(`Max replicas must be 0–${MAX_REPLICAS}`);
   }
   const next = { ...a, ...patch, can_scale: patch.can_scale === undefined ? a.can_scale : patch.can_scale ? 1 : 0 };
   run(

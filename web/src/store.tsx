@@ -1,6 +1,6 @@
 import { setPathRoots } from "./components/ui.tsx";
 import { createContext, useCallback, useContext, useEffect, useReducer, useRef, type ReactNode } from "react";
-import { api, type Agent, type Crew, type DisplayHolder, type RetiredAgent, type WorkRoom, type Group, type Routine, type Message, type Skill, type SkillDraft, type Step, type Task, type ThreadData, type Usage, type Progress, type Attention, type RoutineRun } from "./api.ts";
+import { api, roleLimits, type Agent, type Crew, type DisplayHolder, type RetiredAgent, type WorkRoom, type Group, type Routine, type Message, type Skill, type SkillDraft, type Step, type Task, type ThreadData, type Usage, type Progress, type Attention, type RoutineRun } from "./api.ts";
 
 type State = {
   connected: boolean;
@@ -243,6 +243,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     const [s, k, t, r] = await Promise.all([api.state(), api.skills(), api.tasks(), api.routines()]);
     if (s.roots) setPathRoots([s.roots.agents, s.roots.work]);
+    if (s.limits) Object.assign(roleLimits, s.limits);
     dispatch({ type: "routines", routines: r });
     dispatch({ type: "loaded", agents: s.agents, crews: s.crews ?? [], usage: s.usage, skills: k.skills, drafts: k.drafts, groups: s.groups, paused: s.paused, display: s.display, retired: s.retired });
     dispatch({ type: "board", tasks: t });

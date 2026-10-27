@@ -8,7 +8,7 @@ import { all, dataDir, get } from "./db.ts";
 import { subscribe } from "./bus.ts";
 import {
   createAgent, deleteAgent, dmThreadOf, editInstructions, getAgent, homeOf, listAgents, listMemory, listRetired, readInstructions, retireReplica,
-  setInstanceMeta, spawnInstance, spawnReplica, updateAgent, AGENTS_ROOT, WORK_ROOT } from "./agents.ts";
+  setInstanceMeta, spawnInstance, spawnReplica, updateAgent, AGENTS_ROOT, DEFAULT_PER_CREATOR, MAX_REPLICAS, WORK_ROOT } from "./agents.ts";
 import { isPaused, displayState as screen, releaseDisplay, setPaused, takeDisplay } from "./control.ts";
 import { activity, graph } from "./activity.ts";
 import { checkAttachments, displayWithAttachments, saveUpload } from "./uploads.ts";
@@ -118,6 +118,8 @@ app.get("/api/state", async () => ({
   retired: listRetired().map((a) => ({ id: a.id, name: a.name, color: a.color, base_agent_id: a.base_agent_id })),
   // Where agents' homes and the shared work area are (the UI links file paths under them).
   roots: { agents: AGENTS_ROOT, work: WORK_ROOT },
+  // The role page's parallel-tasks choice (config limits.per_role).
+  limits: { per_role: DEFAULT_PER_CREATOR, max_replicas: MAX_REPLICAS },
 }));
 
 // --- owner controls -------------------------------------------------------------

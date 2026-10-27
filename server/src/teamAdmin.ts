@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { get } from "./db.ts";
 import {
-  MODELS, createAgent, deleteAgent, getAgent, listAgents, readInstructions, slugify, updateAgent, writeInstructions, type Agent,
+  MAX_REPLICAS, DEFAULT_PER_CREATOR, MODELS, createAgent, deleteAgent, getAgent, listAgents, readInstructions, slugify, updateAgent, writeInstructions, type Agent,
 } from "./agents.ts";
 import { create, getApproval, lineDiff, mustSetup, registerKind, type Approval } from "./approvals.ts";
 import { deleteSkill, getSkill, listSkills, render, saveSkill, setAgentSkills, setSkillAgents, skillExists, skillsOf } from "./skills.ts";
@@ -124,8 +124,8 @@ function prepareNewAgent(input: NewAgentInput, ctx: Ctx): Item {
   if (!MODELS.includes(model as any)) throw new Error(`model is one of ${MODELS.join(", ")}`);
   const instructions = text(input.instructions, "The job description").trim();
   if (!instructions) throw new Error("Write the agent's job description (its CLAUDE.md)");
-  if (input.max_replicas !== undefined && !(Number.isInteger(input.max_replicas) && input.max_replicas >= 0 && input.max_replicas <= 6)) {
-    throw new Error("max_replicas is 0–6");
+  if (input.max_replicas !== undefined && !(Number.isInteger(input.max_replicas) && input.max_replicas >= 0 && input.max_replicas <= MAX_REPLICAS)) {
+    throw new Error(`max_replicas is 0–${MAX_REPLICAS}`);
   }
   const crew = input.crew ? mustCrew(input.crew) : null;
   return {
@@ -180,7 +180,7 @@ function prepareAgentChange(input: AgentChangeInput, ctx: Ctx): Item {
     set("max_turns", input.max_turns);
   }
   if (input.max_replicas !== undefined) {
-    if (!(Number.isInteger(input.max_replicas) && input.max_replicas >= 0 && input.max_replicas <= 6)) throw new Error("max_replicas is 0–6");
+    if (!(Number.isInteger(input.max_replicas) && input.max_replicas >= 0 && input.max_replicas <= MAX_REPLICAS)) throw new Error(`max_replicas is 0–${MAX_REPLICAS}`);
     set("max_replicas", input.max_replicas);
   }
   if (input.can_scale !== undefined) {
@@ -542,7 +542,7 @@ export function teamOverview(): string {
     if (a.builtin) return `- **${a.name}** (${a.title}): you. Built in.`;
     const skills = skillsOf(a.id);
     const ints = mappedIntegrations(a.id);
-    return `- **${a.name}** (${a.title}) · ${crewIdOf(a) ? `${crewName(crewIdOf(a))} crew` : "no crew"} · model ${a.model} · ${a.can_scale ? "lead (can start other agents' tasks)" : `up to ${a.max_replicas || 5} parallel tasks per starter`} · max ${a.max_turns} steps/turn · ${liveTasks(a.id)} live task(s)
+    return `- **${a.name}** (${a.title}) · ${crewIdOf(a) ? `${crewName(crewIdOf(a))} crew` : "no crew"} · model ${a.model} · ${a.can_scale ? "lead (can start other agents' tasks)" : `up to ${a.max_replicas || DEFAULT_PER_CREATOR} parallel tasks per starter`} · max ${a.max_turns} steps/turn · ${liveTasks(a.id)} live task(s)
     ${a.summary}
     skills: ${skills.join(", ") || "none"} · integrations: ${ints.join(", ") || "none"} · repos: ${reposOf(a).join(", ") || "none"}`;
   });

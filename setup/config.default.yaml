@@ -47,3 +47,6 @@ cloudflare: { hostname: "", team_domain: "", aud: "" }  # set by the access modu
 owner: { tailscale_login: "", email: "" }           # who may use the portal (set during setup)
 mobile: { serve_port: 8443, expo_owner: "", eas_project_id: "" }   # gateway: https://<node>.ts.net:<serve_port>
 hosting: { serve_port: 10000 }                      # hosted services: https://<node>.ts.net:<serve_port>/<name>/
+limits:                   # how much runs at once (restart the portal to apply)
+  running_turns: 10       # agent turns in flight across all agents; each is a Claude process
+  per_role: 10            # live tasks of one role an agent may start (a role's own setting overrides)
