@@ -21,7 +21,7 @@ steps:
     instructions: |
       For each repo that needs one, save it in the terminal (the value is read from stdin):
         `agentbox secret set <repo>/.env < path/to/.env`
-      or paste it: `agentbox secret set <repo>/.env`, paste, then Ctrl-D.
+      or paste it: `agentbox secret set <repo>/.env`, paste (it shows masked), then Enter on an empty line.
       Agents symlink or copy them into their worktrees; they never commit them.
     copy: "agentbox secret set example-repo/.env"
     check: "find \"$(agentbox config get paths.secrets)\" -mindepth 2 \\( -name '*.env' -o -name '.env.*' \\) -type f | grep -q ."

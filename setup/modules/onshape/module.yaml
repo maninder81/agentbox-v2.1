@@ -35,7 +35,7 @@ steps:
          **Read** and **Write** (no Delete, no Share). Copy the access key and the secret key: the secret is shown once.
       2. Save them on the VM in this terminal (never in the chat):
            `agentbox secret set onshape.env`
-         then type these two lines, Enter after each, then Ctrl-D:
+         then paste or type these two lines (each shows masked), then Enter on an empty line:
            ONSHAPE_ACCESS_KEY=<access key>
            ONSHAPE_SECRET_KEY=<secret key>
       Free plan: Onshape only makes public documents; agents won't create any unless you turn on allow_public.

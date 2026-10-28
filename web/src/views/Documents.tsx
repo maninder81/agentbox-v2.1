@@ -118,7 +118,7 @@ export function DocumentReader({ doc, onClose, error: initialError }: { doc: Rea
         </header>
         <div className="reader-body">
           {error && <div className="error-box">{error}</div>}
-          {kind === "markdown" && text !== null && <div className="reader-prose"><Markdown text={text} /></div>}
+          {kind === "markdown" && text !== null && <div className="reader-prose"><Markdown text={text} base={doc.path.slice(0, doc.path.lastIndexOf("/"))} /></div>}
           {kind === "text" && text !== null && <pre className="reader-pre">{text}</pre>}
           {(kind === "markdown" || kind === "text") && text === null && !error && <p className="hint">Loading…</p>}
           {kind === "pdf" && <iframe className="reader-frame" src={fileUrl(doc.path)} title={name} />}

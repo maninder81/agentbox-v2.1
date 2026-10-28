@@ -24,6 +24,9 @@ function mentioned(text: string, members: Agent[]) {
 
 // ---------------------------------------------------------------------------
 
+import { GroupWorkspaceList, useGroupWorkspaces } from "../components/GroupWorkspaces.tsx";
+import { RoadmapStrip } from "../components/Roadmap.tsx";
+
 export function GroupChat({ id }: { id: string }) {
   const { groups, agents, everyone, threads, live, loadThread, progress } = useStore();
   const group = groups.find((g) => g.id === id);
@@ -36,6 +39,9 @@ export function GroupChat({ id }: { id: string }) {
   const running = thread?.tasks.filter((t) => t.status === "running") ?? [];
   useEscToStop(running.length > 0, () => running.forEach((t) => api.stop(t.id)));
   const [docs, setDocs] = useState(false);
+  const [side, setSide] = useState<"workspaces" | "documents">("workspaces");
+  const program = useGroupWorkspaces(id);
+  const liveWs = program?.workspaces.filter((w) => w.lead && w.lead.status !== "done").length ?? 0;
 
   if (!group) return <div className="page"><div className="page-inner"><p className="lede">No such group.</p></div></div>;
   const members = group.members.map((m) => everyone.find((a) => a.id === m)).filter(Boolean) as Agent[];
@@ -64,10 +70,15 @@ export function GroupChat({ id }: { id: string }) {
               <Icon name="stop" size={14} />Stop
             </button>
           )}
-          <button className="icon-btn" aria-pressed={docs} aria-label="Group documents" title="Documents" onClick={() => setDocs(!docs)}><Icon name="doc" /></button>
+          <button className="btn sm" aria-pressed={docs && side === "workspaces"} title="Workspaces the group's lead launched"
+            onClick={() => { setSide("workspaces"); setDocs(!(docs && side === "workspaces")); }}>
+            <Icon name="room" size={14} />Workspaces{liveWs ? <span className="tab-count">{liveWs}</span> : null}
+          </button>
+          <button className="icon-btn" aria-pressed={docs && side === "documents"} aria-label="Group documents" title="Documents" onClick={() => { setSide("documents"); setDocs(!(docs && side === "documents")); }}><Icon name="doc" /></button>
           <a className="icon-btn" href={`#/groups/${id}/settings`} aria-label="Group settings" title="Group settings"><Icon name="panel" /></a>
         </div>
       </header>
+      {program?.lead_instance_id && <RoadmapStrip instanceId={program.lead_instance_id} />}
 
       {thread ? <GroupTimeline group={group} members={members} lead={lead} data={thread} live={live} /> : <div className="timeline" />}
 
@@ -87,12 +98,23 @@ export function GroupChat({ id }: { id: string }) {
       <GroupComposer group={group} members={members} lead={lead} />
     </section>
     {docs && (
-      <aside className="panel" aria-label="Group documents">
+      <aside className="panel" aria-label="Group details">
         <div className="tabs" role="tablist">
-          <button role="tab" aria-selected="true">Documents</button>
+          <button role="tab" aria-selected={side === "workspaces"} onClick={() => setSide("workspaces")}>
+            Workspaces{liveWs ? <span className="tab-count">{liveWs}</span> : null}
+          </button>
+          <button role="tab" aria-selected={side === "documents"} onClick={() => setSide("documents")}>Documents</button>
           <button className="icon-btn" style={{ marginLeft: "auto", alignSelf: "center" }} aria-label="Close" onClick={() => setDocs(false)}><Icon name="close" /></button>
         </div>
-        <div className="panel-body"><WorkDocuments load={() => api.groupDocuments(group.id)} empty="No documents from this group yet." /></div>
+        <div className="panel-body">
+          {side === "workspaces" && (
+            <>
+              <p className="hint" style={{ margin: 0 }}>{lead?.name ?? "The lead"} launches a workspace per item you ask for, follows them and answers their questions; only what's yours comes to you.</p>
+              <GroupWorkspaceList workspaces={program?.workspaces ?? []} />
+            </>
+          )}
+          {side === "documents" && <WorkDocuments load={() => api.groupDocuments(group.id)} empty="No documents from this group yet." />}
+        </div>
       </aside>
     )}
     </>

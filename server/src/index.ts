@@ -49,10 +49,13 @@ import { registerMemoryRoutes, startMemory } from "./memory.ts";
 import { registerNoteRoutes } from "./notes.ts";
 import { listCrews, registerCrewRoutes, setRoleCrew } from "./crews.ts";
 import { addLink, registerLinkRoutes } from "./linkedWork.ts";
+import { registerGroupWorkRoutes } from "./groupWork.ts";
 import { routeHelperPlans, setGate } from "./plans.ts";
 import { bindRepo, getRepo, roleAllowed, startRepos } from "./repos.ts";
 import { startSetupRequests } from "./setupRequests.ts";
 import { roomServices, running as hostedRunning, serviceById, startHosting, stopService, view as hostedView } from "./hosting.ts";
+import { registerShareRoutes, startSharing } from "./shares.ts";
+import { startShareServer } from "./shareServer.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Ports and feature flags come from /etc/agentbox/config.yaml (config.ts). A disabled module's
@@ -537,6 +540,9 @@ registerMemoryRoutes(app);
 registerNoteRoutes(app);
 registerCrewRoutes(app);
 registerLinkRoutes(app);
+registerGroupWorkRoutes(app);
+// Sharing one piece of work with a guest (shares.ts): the owner's side. Guests use shareServer.ts.
+registerShareRoutes(app);
 
 // --- hosted services (hosting.ts): what agents serve; the owner sees and stops them -------------
 app.get("/api/hosting", async (req) => {
@@ -599,6 +605,15 @@ try {
   app.addHook("onClose", async () => hosting.stop());
 } catch (e: any) {
   app.log.error(`hosting: gateway didn't start on 127.0.0.1:${ports.apps}: ${e?.message ?? e}`);
+}
+// Shared work: the guest server (loopback; public only through ngrok while a link is live). Optional
+// like hosting: a failure here mustn't take the portal down.
+try {
+  const shareServer = await startShareServer((m) => app.log.info(m));
+  const sharing = startSharing((m) => app.log.warn(m));
+  app.addHook("onClose", async () => { sharing.stop(); await shareServer.stop(); });
+} catch (e: any) {
+  app.log.error(`sharing: guest server didn't start on 127.0.0.1:${ports.share}: ${e?.message ?? e}`);
 }
 // Loopback only: Lima forwards 127.0.0.1-bound guest ports to the Mac, and nothing else in the VM
 // (e.g. a tailnet interface) should reach the portal.

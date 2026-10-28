@@ -22,6 +22,7 @@ ports:                    # all bound to 127.0.0.1
   guide: 7699
   bench: 7740              # first of 40 ports for devices shared by the device bridge (bench)
   apps: 7790               # hosting gateway (what agents host); the services themselves use 7800–7899
+  share: 7785              # shared work for guests (only through the ngrok tunnel, while a link is live)
 modules:                  # base: core, claude and access are always on; display and terminal too by default
   display: true
   terminal: true
@@ -42,6 +43,7 @@ modules:                  # base: core, claude and access are always on; display
   push: false
   bench: false            # device bridge: your computer's USB devices for agents
   onshape: false          # agents upload CAD models to your Onshape for review
+  ngrok: false            # share one piece of work with someone outside your tailnet (a link with an expiry)
 tailscale: { hostname: "" }                         # set by the access module
 cloudflare: { hostname: "", team_domain: "", aud: "" }  # set by the access module
 owner: { tailscale_login: "", email: "" }           # who may use the portal (set during setup)

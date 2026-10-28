@@ -18,7 +18,8 @@
     "test:notes": "node --disable-warning=ExperimentalWarning --import tsx --test test/notes.test.ts",
     "test:crews": "node --disable-warning=ExperimentalWarning --import tsx --test test/crews.test.ts",
     "test:linked-work": "node --disable-warning=ExperimentalWarning --import tsx --test test/linked-work.test.ts",
-    "test:uploads": "node --disable-warning=ExperimentalWarning --import tsx --test test/uploads.test.ts"
+    "test:uploads": "node --disable-warning=ExperimentalWarning --import tsx --test test/uploads.test.ts",
+    "test:group-workspaces": "node --disable-warning=ExperimentalWarning --import tsx --test test/group-workspaces.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.293",

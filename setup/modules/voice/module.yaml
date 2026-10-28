@@ -16,7 +16,7 @@ steps:
     instructions: |
       Create an API key at https://z.ai (API keys), then in the terminal run
         `agentbox secret set zai.env`
-      and type `ZAI_API_KEY=<your key>`, Enter, then Ctrl-D. The key never goes through the guide page.
+      and paste `ZAI_API_KEY=<your key>` (it shows masked), then Enter on an empty line. The key never goes through the guide page.
     copy: "agentbox secret set zai.env"
     check: "grep -q '^ZAI_API_KEY=.' \"$(agentbox config get paths.secrets)/zai.env\""
   - id: verify

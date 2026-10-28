@@ -73,7 +73,7 @@ function NoteItem({ note }: { note: Note }) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { if (!editing) setBody(note.body); }, [note.body, editing]);
-  const who = note.author === "user" ? "You" : everyone.find((a) => a.id === note.author)?.name;
+  const who = note.author === "user" ? "You" : note.author?.startsWith("guest:") ? `${note.author.slice(6)} (guest)` : everyone.find((a) => a.id === note.author)?.name;
   const save = async () => {
     setError(null);
     try { await api.updateNote(note.id, body); setEditing(false); } catch (e: any) { setError(e.message); }

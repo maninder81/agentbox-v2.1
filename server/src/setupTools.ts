@@ -6,7 +6,7 @@ import {
   integrationAction, integrationStatus, listIntegrations, rolesFor, saveSettings, settingText, type Integration,
 } from "./integrations.ts";
 import { proposeMapping, proposeRepo, proposeTeamRule } from "./approvals.ts";
-import { listRepos, worktreesOf } from "./repos.ts";
+import { chooseMapper, listRepos, worktreesOf } from "./repos.ts";
 import { completeBySetupAgent, getRequest, listRequests } from "./setupRequests.ts";
 import { isSetupAgent, postIntegrationCard } from "./setup.ts";
 import { addSteps, planChecker, planView, setPlan, updateStep, type PlanView, type StepInput } from "./setupPlan.ts";
@@ -390,6 +390,21 @@ export function setupTools(agent: Agent, taskId: string) {
         if (no) return no;
         try { return text(skillDetail(name)); } catch (e: any) { return refuse(e.message); }
       }),
+
+      tool("choose_repo_mapper", "Record which agent maps a repo, when agentbox asked you to choose (a repo was added with nobody named). Starts the mapping run.",
+        {
+          repo: z.string().describe("the repo's name"),
+          agent: z.string().describe("the agent (one of the crew leads you were offered)"),
+          reason: z.string().describe("one sentence: why this crew fits the repo"),
+        },
+        async ({ repo, agent: who, reason }) => {
+          const no = guard();
+          if (no) return no;
+          try {
+            const inst = chooseMapper(agent, repo, who, reason);
+            return text(`${inst.name} maps ${repo} now (task "${inst.label}"). Tell the owner who and why.`);
+          } catch (e: any) { return refuse(e.message); }
+        }),
 
       tool("propose_new_agent", "Propose a new agent (role). The owner sees it as an approval card (they can edit the job description) and it's created only when they approve. For an agent that needs new skills too, use propose_changes.",
         {

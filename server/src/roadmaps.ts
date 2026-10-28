@@ -75,7 +75,8 @@ function status(v: unknown, what: string): ItemStatus {
 }
 function link(v: unknown, what: string): string {
   const s = short(`${what} link`, v, LIMITS.link);
-  if (s && !/^https?:\/\/\S+$/.test(s) && !s.startsWith("/")) throw new Error(`${what} link: an http(s) URL or an absolute file path`);
+  // #/… is a page in agentbox (e.g. a workspace a group launched).
+  if (s && !/^https?:\/\/\S+$/.test(s) && !s.startsWith("/") && !/^#\/[\w\-/]+$/.test(s)) throw new Error(`${what} link: an http(s) URL or an absolute file path`);
   return s;
 }
 

@@ -118,7 +118,7 @@ function systemNote(groupId: string, content: string) {
 }
 
 /** The member agent's instance for this group's conversation (one per agent per group). */
-function groupInstance(group: Group, roleId: string) {
+export function groupInstance(group: Group, roleId: string) {
   const live = listAgents().find((a) => a.base_agent_id === roleId && a.created_by === `group:${group.id}`);
   return live ?? spawnInstance(roleId, { label: `#${group.name}`, createdBy: `group:${group.id}` });
 }

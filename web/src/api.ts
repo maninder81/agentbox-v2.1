@@ -120,6 +120,11 @@ export type InstanceSummary = {
   created_by: string | null; created_at: string; retired_at: string | null; kept: boolean;
   status: AgentStatus | "done"; current: string | null; queued: number;
 };
+/** A workspace a group's lead launched (groupWork.ts). */
+export type GroupWorkspace = {
+  id: string; title: string; root_id: string; item_id: string; created_at: string; question: string | null; step: string | null;
+  lead: InstanceSummary | null; roadmaps: { title: string; total: number; done: number; blocked: number; doing: number; todo: number; skipped: number }[];
+};
 /** Linked work (linkedWork.ts): other work this one's agents may read. */
 export type LinkedWorkInfo = { id: string; label: string; name: string; crew: string | null; crew_name: string; status: "live" | "done" | "deleted" };
 export type WorkLink = { id: string; created_at: string; work: LinkedWorkInfo };
@@ -258,13 +263,18 @@ export type RepoWorktree = {
   status: "pending" | "active" | "kept" | "removed" | "discarded" | "error"; note: string | null; created_at: string; closed_at: string | null;
   instance: { id: string; name: string; label: string | null; retired: boolean } | null;
 };
+/** A weekly map refresh: one per agent that maps repos. */
+export type MapRoutineInfo = { id: string; enabled: boolean; agent_id: string; agent: string };
 export type Repo = {
   id: string; name: string; url: string; provider: "github" | "gitlab" | "bitbucket" | "other"; default_branch: string | null;
   description: string; test_command: string; protected_branches: string[]; allowed_roles: string[];
   agents_may_merge: boolean; agents_may_deploy: boolean; propose_map_pr: boolean; lead_may_merge: boolean;
   status: "cloning" | "ready" | "error" | "archived"; last_fetch_at: string | null; error: string | null;
-  map_status: "none" | "running" | "ready" | "error"; map_updated_at: string | null; map_task_id: string | null; map_error: string | null;
+  /** choosing: the helper is picking who maps it (map_task_id is the helper's task). */
+  map_status: "none" | "choosing" | "running" | "ready" | "error"; map_updated_at: string | null; map_task_id: string | null; map_error: string | null;
   archive_path: string | null; archived_at: string | null; created_at: string;
+  /** Who maps it (an agent); null: the helper picks a crew lead when it's mapped. mapper_note: who chose and why. */
+  mapper_role_id: string | null; mapper_note: string | null;
   path: string | null; map_dir: string; map_files: { file: string; path: string; exists: boolean; size: number; modified: string | null }[];
   /** Repo memory (agent-owned notes): count, stale ones, task drafts waiting for their PR to merge. */
   memory?: { dir: string; index: string | null; notes: number; stale: number; scanned_at: string | null; drafts: { id: string; agent_name: string | null; instance_id: string; status: "open" | "promoting"; notes: number; note: string | null; pr_number: number | null }[] } | null;
@@ -350,6 +360,12 @@ export type Note = {
   id: string; room_id: string; quote: string | null; body: string; message_id: string | null; author: string | null;
   created_at: string; updated_at: string;
 };
+/** A link sharing one piece of work with a guest (shares.ts). The link itself is shown once, when made. */
+export type WorkShare = {
+  id: string; room_id: string; perm: "read" | "edit"; label: string; created_at: string; expires_at: string;
+  revoked_at: string | null; last_seen_at: string | null; live: boolean;
+};
+export type ShareExpiry = "6h" | "1d" | "7d";
 export type HostedService = {
   id: string; name: string; kind: "static" | "command"; dir: string; command: string | null; port: number | null;
   status: "running" | "stopped" | "exited"; url: string; local_url: string; started_by: string; started_by_id: string;
@@ -365,6 +381,11 @@ export const api = {
   work: () => call<{ live: WorkRoom[]; done: WorkRoom[] }>("GET", "/api/work"),
   newTask: (roleId: string, text: string, title?: string, images?: string[], repos?: string[], requirePlan?: boolean, links?: string[]) =>
     call<Agent>("POST", "/api/work", { role_id: roleId, text, title, images, repos, require_plan: requirePlan || undefined, links: links?.length ? links : undefined }),
+  publicConfig: () => call<{ host: string; access: string; modules: Record<string, boolean> }>("GET", "/api/config/public"),
+  shares: (roomId: string) => call<{ shares: WorkShare[]; ready: boolean; missing: string | null }>("GET", `/api/work/${roomId}/shares`),
+  createShare: (roomId: string, b: { perm: "read" | "edit"; expiry: ShareExpiry; label?: string }) =>
+    call<{ share: WorkShare; url: string }>("POST", `/api/work/${roomId}/shares`, b),
+  revokeShare: (id: string) => call<WorkShare>("DELETE", `/api/shares/${id}`),
   links: (instanceId: string) => call<{ room_id: string; links: WorkLink[]; linked_from: WorkLink[] }>("GET", `/api/work/${instanceId}/links`),
   addLink: (instanceId: string, workId: string) => call<{ room_id: string; links: WorkLink[] }>("POST", `/api/work/${instanceId}/links`, { work_id: workId }),
   removeLink: (id: string) => call<{ ok: true }>("DELETE", `/api/links/${id}`),
@@ -377,6 +398,7 @@ export const api = {
   updateNote: (id: string, body: string) => call<Note>("PATCH", `/api/notes/${id}`, { body }),
   deleteNote: (id: string) => call<{ ok: true }>("DELETE", `/api/notes/${id}`),
   roomDocuments: (rootId: string) => call<(DocumentInfo & { author: string | null })[]>("GET", `/api/work/${rootId}/documents`),
+  groupWorkspaces: (groupId: string) => call<{ lead_instance_id: string | null; workspaces: GroupWorkspace[] }>("GET", `/api/groups/${groupId}/workspaces`),
   groupDocuments: (groupId: string) => call<(DocumentInfo & { author: string | null })[]>("GET", `/api/groups/${groupId}/documents`),
   allDocuments: () => call<(DocumentInfo & { role: string })[]>("GET", "/api/documents"),
   finishTask: (instanceId: string) => call<{ finished: number }>("POST", `/api/agents/${instanceId}/done`),
@@ -505,12 +527,12 @@ export const api = {
   approve: (id: string, edits?: Record<string, Record<string, string>>) => call<Approval>("POST", `/api/approvals/${id}/approve`, { edits: edits ?? {} }),
   undoApproval: (id: string) => call<Approval>("POST", `/api/approvals/${id}/undo`),
   // Repos (docs/V2-ARCHITECTURE.md, Changes (repos)).
-  repos: () => call<{ repos: Repo[]; map_routine: { id: string; enabled: boolean } | null }>("GET", "/api/repos"),
+  repos: () => call<{ repos: Repo[]; map_routines: MapRoutineInfo[]; map_routines_missing: string[] }>("GET", "/api/repos"),
   repo: (name: string) => call<Repo>("GET", `/api/repos/${encodeURIComponent(name)}`),
   availableRepos: (refresh = false) => call<{ accounts: { provider: string; ok: boolean; error: string | null; count: number }[]; repos: AccountRepo[] }>("GET", `/api/repos/available${refresh ? "?refresh=1" : ""}`),
   checkRepo: (url: string) => call<{ ok: boolean; default_branch: string | null; error: string | null; provider: string; name: string; taken: boolean }>("POST", "/api/repos/check", { url }),
-  addRepo: (b: { url: string; name?: string; default_branch?: string; allowed_roles?: string[]; description?: string }) => call<Repo>("POST", "/api/repos", b),
-  updateRepo: (name: string, patch: Partial<Pick<Repo, "description" | "test_command" | "default_branch" | "protected_branches" | "allowed_roles" | "agents_may_merge" | "agents_may_deploy" | "propose_map_pr" | "lead_may_merge">>) =>
+  addRepo: (b: { url: string; name?: string; default_branch?: string; allowed_roles?: string[]; description?: string; mapper_role_id?: string | null }) => call<Repo>("POST", "/api/repos", b),
+  updateRepo: (name: string, patch: Partial<Pick<Repo, "description" | "test_command" | "default_branch" | "protected_branches" | "allowed_roles" | "agents_may_merge" | "agents_may_deploy" | "propose_map_pr" | "lead_may_merge" | "mapper_role_id">>) =>
     call<Repo>("PATCH", `/api/repos/${encodeURIComponent(name)}`, patch),
   fetchRepo: (name: string) => call<Repo>("POST", `/api/repos/${encodeURIComponent(name)}/fetch`, {}),
   retryRepo: (name: string) => call<Repo>("POST", `/api/repos/${encodeURIComponent(name)}/retry`, {}),
@@ -518,7 +540,7 @@ export const api = {
   archiveRepo: (name: string, confirmUnpushed = false) => call<Repo>("POST", `/api/repos/${encodeURIComponent(name)}/archive`, { confirm_unpushed: confirmUnpushed }),
   purgeRepo: (name: string) => call<{ purged: string }>("POST", `/api/repos/${encodeURIComponent(name)}/purge`, {}),
   discardWorktree: (id: string) => call<RepoWorktree>("POST", `/api/repos/worktrees/${id}/discard`, {}),
-  mapRoutine: () => call<{ id: string; created: boolean }>("POST", "/api/repos/map-routine", {}),
+  mapRoutine: () => call<{ created: string[] }>("POST", "/api/repos/map-routine", {}),
   taskRepos: (instanceId: string) => call<{ repos: RepoBinding[] }>("GET", `/api/agents/${instanceId}/repos`),
   // Setup requests: agents ask, the owner starts or declines.
   setupRequest: (id: string) => call<SetupRequest>("GET", `/api/setup-requests/${id}`),

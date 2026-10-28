@@ -5,6 +5,7 @@ import { RoadmapCard, RoadmapStrip } from "../components/Roadmap.tsx";
 import { HostedList, HostedStrip, useHosted } from "../components/Hosted.tsx";
 import { NotesTab, SaveSelection, useNotes } from "../components/Notes.tsx";
 import { LinkWorkButton, LinkedStrip } from "../components/LinkedWork.tsx";
+import { ShareButton } from "../components/Share.tsx";
 import { AttachButton, AttachmentStrip, useAttachments } from "../components/Attachments.tsx";
 import { SetupRequestCard } from "../components/Requests.tsx";
 import { MicButton, VoiceStatus, useVoice } from "../components/Voice.tsx";
@@ -86,6 +87,7 @@ export function Room({ id }: { id: string }) {
               </button>
             )}
             {!done && <LinkWorkButton instanceId={root.id} />}
+            {!done && <ShareButton roomId={root.id} />}
             <RoomLifecycle root={root} />
             <button className="icon-btn" aria-pressed={panel} aria-label="Room details" onClick={() => setPanel(!panel)}><Icon name="panel" /></button>
           </div>
@@ -159,14 +161,18 @@ export function TimelineEntries({ msgs, pending, steps, members, byThread, taskB
             const task = m.task_id ? taskById.get(m.task_id) : undefined;
             const isReply = !!task && task.agent_id === m.author;
             const author = m.author === "user" ? null : everyone.find((a) => a.id === m.author);
+            // A guest the owner shared this work with (shares.ts): "guest:<name>".
+            const guest = m.author.startsWith("guest:") ? m.author.slice(6) : null;
             return (
               <div key={m.id} className="msg" data-msg-id={m.id} data-author={m.author}>
                 {m.author === "user"
                   ? <span className="avatar you-avatar" style={{ width: 28, height: 28, fontSize: 12 }} aria-hidden="true">You</span>
+                  : guest ? <span className="avatar you-avatar guest-avatar" style={{ width: 28, height: 28, fontSize: 12 }} aria-hidden="true">{guest.slice(0, 1).toUpperCase()}</span>
                   : <Avatar name={author?.name ?? "?"} color={author?.color ?? "var(--muted)"} size={28} />}
                 <div style={{ minWidth: 0 }}>
                   <div className="msg-meta">
-                    <strong>{m.author === "user" ? "You" : author?.name ?? (m.author === "routine" ? "Routine" : "agent")}</strong>
+                    <strong>{m.author === "user" ? "You" : guest ? guest : author?.name ?? (m.author === "routine" ? "Routine" : "agent")}</strong>
+                    {guest && <span className="tag">guest</span>}
                     {from && <><a className="room-tag" href={`#/agents/${from.id}`} title={`Open ${from.label}`}>{from.label ?? from.name}</a><span className="hint">→</span></>}
                     {inst && <a className="room-tag" href={`#/agents/${inst.id}`} title={`Open ${inst.label}`}>{inst.label ?? inst.name}</a>}
                     {!isReply && task?.source === "agent" && <span className="hint">handed off</span>}

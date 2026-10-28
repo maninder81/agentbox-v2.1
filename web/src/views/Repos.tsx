@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api, fileUrl, type AccountRepo, type Repo, type RepoWorktree } from "../api.ts";
+import { ApiError, api, fileUrl, type AccountRepo, type MapRoutineInfo, type Repo, type RepoWorktree } from "../api.ts";
 import { useStore } from "../store.tsx";
 import { go } from "../router.ts";
 import { Icon, relTime } from "../components/ui.tsx";
@@ -12,12 +12,13 @@ import { fmtDuration, heartbeat } from "../components/progress.ts";
 
 export function useRepos() {
   const { onEvent } = useStore();
-  const [data, setData] = useState<{ repos: Repo[]; map_routine: { id: string; enabled: boolean } | null; error: string | null } | null>(null);
-  const load = () => api.repos().then((d) => setData({ ...d, error: null })).catch((e) => setData((x) => ({ repos: x?.repos ?? [], map_routine: x?.map_routine ?? null, error: e.message })));
+  const [data, setData] = useState<{ repos: Repo[]; map_routines: MapRoutineInfo[]; map_routines_missing: string[]; error: string | null } | null>(null);
+  const load = () => api.repos().then((d) => setData({ ...d, error: null }))
+    .catch((e) => setData((x) => ({ repos: x?.repos ?? [], map_routines: x?.map_routines ?? [], map_routines_missing: x?.map_routines_missing ?? [], error: e.message })));
   const timer = useRef<number | null>(null);
   useEffect(() => { load(); }, []);
   useEffect(() => onEvent((e) => {
-    if (e.type === "repo.updated" || e.type === "memory.updated" || e.type === "agent.retired" || e.type === "agent.created") {
+    if (e.type === "repo.updated" || e.type === "memory.updated" || e.type === "agent.retired" || e.type === "agent.created" || e.type === "crews.updated") {
       if (timer.current) clearTimeout(timer.current);
       timer.current = window.setTimeout(load, 250);
     }
@@ -62,7 +63,7 @@ export function Repos({ focus }: { focus?: string }) {
         <div className="repo-list">
           {live.map((r) => <RepoCard key={r.id} repo={r} onChange={reload} open={focus === r.name} />)}
         </div>
-        {data && live.some((r) => r.status === "ready") && <MapRoutine routine={data.map_routine} onChange={reload} />}
+        {data && live.some((r) => r.status === "ready") && <MapRoutine routines={data.map_routines} missing={data.map_routines_missing} onChange={reload} />}
         {archived.length > 0 && (
           <section>
             <h2>Archived</h2>
@@ -75,7 +76,35 @@ export function Repos({ focus }: { focus?: string }) {
 }
 
 const STATUS_LABEL: Record<Repo["status"], string> = { cloning: "Cloning", ready: "Ready", error: "Error", archived: "Archived" };
-const MAP_LABEL: Record<Repo["map_status"], string> = { none: "No map", running: "Mapping…", ready: "Mapped", error: "Map failed" };
+const MAP_LABEL: Record<Repo["map_status"], string> = { none: "No map", choosing: "Choosing who maps it…", running: "Mapping…", ready: "Mapped", error: "Map failed" };
+
+/**
+ * Who maps a repo: "the helper chooses" (it looks at the repo and picks a crew lead), or an agent allowed
+ * to use it, grouped by crew with each crew's lead first.
+ */
+function MapperPicker({ value, allowed, onChange, disabled }: { value: string | null; allowed: string[]; onChange: (id: string | null) => void; disabled?: boolean }) {
+  const { agents, crews } = useStore();
+  const roles = agents.filter((a) => !a.base_agent_id && !a.builtin && (!allowed.length || allowed.includes(a.id)));
+  const groups = [...crews.map((c) => ({ id: c.id, name: `${c.name} crew`, lead: c.lead_role_id })), { id: "", name: crews.length ? "No crew" : "Agents", lead: null }]
+    .map((g) => {
+      const members = roles.filter((r) => (crews.some((c) => c.id === r.crew_id) ? r.crew_id : "") === g.id);
+      const lead = members.find((m) => m.id === g.lead) ?? members.find((m) => m.can_scale);
+      return { ...g, members: lead ? [lead, ...members.filter((m) => m !== lead)] : members, leadId: lead?.id };
+    })
+    .filter((g) => g.members.length);
+  const gone = value && !roles.some((r) => r.id === value);
+  return (
+    <select className="text mapper-picker" value={gone ? "" : value ?? ""} disabled={disabled} aria-label="Who maps this repo"
+      onChange={(e) => onChange(e.target.value || null)}>
+      <option value="">Let the helper choose (it looks at the repo)</option>
+      {groups.map((g) => (
+        <optgroup key={g.id || "none"} label={g.name}>
+          {g.members.map((m) => <option key={m.id} value={m.id}>{m.name}{m.id === g.leadId ? " (lead)" : ""} — {m.title}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
 
 function useNow(on: boolean) {
   const [t, setT] = useState(() => Date.now());
@@ -117,15 +146,20 @@ function RepoCard({ repo: r, onChange, open }: { repo: Repo; onChange: () => voi
         </div>
         <div className="repo-actions">
           {r.status === "ready" && <button className="btn sm" disabled={!!busy} onClick={() => act("fetch", () => api.fetchRepo(r.name))}><Icon name="refresh" size={14} />{busy === "fetch" ? "Fetching…" : "Fetch"}</button>}
-          {r.status === "ready" && r.map_status !== "running" && (
-            <button className="btn sm" disabled={!!busy} onClick={() => act("remap", async () => { const x = await api.remapRepo(r.name); go({ name: "agent", id: x.instance_id }); })}>
+          {r.status === "ready" && r.map_status !== "running" && r.map_status !== "choosing" && (
+            <button className="btn sm" disabled={!!busy} onClick={() => act("remap", async () => { const x = await api.remapRepo(r.name); go({ name: "agent", id: x.instance_id }); })}
+              title={r.mapper_role_id ? undefined : "No mapper chosen: the helper looks at the repo and picks a crew lead first"}>
               {r.map_status === "none" ? "Map it" : "Re-map"}
             </button>
           )}
           {r.status === "error" && <button className="btn sm primary" disabled={!!busy} onClick={() => act("retry", () => api.retryRepo(r.name))}>Retry clone</button>}
-          <button className="btn sm ghost" aria-expanded={settings} onClick={() => setSettings(!settings)}>Settings</button>
+          <button className="btn sm ghost" aria-expanded={settings} aria-controls={`repo-settings-${r.id}`} onClick={() => setSettings(!settings)}>
+            {settings ? "Close settings" : "Settings"}
+          </button>
         </div>
       </div>
+      {/* Right under the buttons: below the worktree list it opened out of sight on a busy repo. */}
+      {settings && <RepoSettings repo={r} onSaved={onChange} onArchive={() => archive(false)} busy={busy === "archive"} />}
       <div className="sub repo-url">{r.url}</div>
       {r.description && <div className="sub">{r.description}</div>}
       <dl className="repo-meta">
@@ -135,8 +169,19 @@ function RepoCard({ repo: r, onChange, open }: { repo: Repo; onChange: () => voi
         <dd>
           <span className={`map-state m-${r.map_status}`}>{MAP_LABEL[r.map_status]}</span>
           {r.map_status === "ready" && r.map_updated_at && <span className="hint"> · {relTime(r.map_updated_at)}</span>}
-          {r.map_status === "running" && r.map_task_id && <> · <a href={`#/agents/${r.map_task_id}`}>open the task</a></>}
+          {(r.map_status === "running" || r.map_status === "choosing") && r.map_task_id && <> · <a href={`#/agents/${r.map_task_id}`}>open the task</a></>}
         </dd>
+        {r.status !== "archived" && (
+          <>
+            <dt>Mapped by</dt>
+            <dd className="mapper-row">
+              <MapperPicker value={r.mapper_role_id} allowed={r.allowed_roles} disabled={!!busy || r.map_status === "running"}
+                onChange={(id) => act("mapper", () => api.updateRepo(r.name, { mapper_role_id: id }))} />
+              {r.mapper_role_id && !everyone.some((a) => a.id === r.mapper_role_id && !a.retired_at) && <span className="hint" style={{ color: "var(--warn)" }}>Its mapper was removed: pick another.</span>}
+              {r.mapper_note && r.mapper_role_id && <span className="hint">{r.mapper_note}</span>}
+            </dd>
+          </>
+        )}
         {r.memory && (
           <>
             <dt>Memory</dt>
@@ -194,7 +239,6 @@ function RepoCard({ repo: r, onChange, open }: { repo: Repo; onChange: () => voi
           <div style={{ marginTop: 8 }}><button className="btn sm danger" disabled={!!busy} onClick={() => archive(true)}>Archive anyway</button></div>
         </div>
       )}
-      {settings && <RepoSettings repo={r} onSaved={onChange} onArchive={() => archive(false)} busy={busy === "archive"} />}
     </article>
   );
 }
@@ -229,6 +273,8 @@ function WorktreeRow({ w, onChange }: { w: RepoWorktree; onChange: () => void })
 
 function RepoSettings({ repo: r, onSaved, onArchive, busy }: { repo: Repo; onSaved: () => void; onArchive: () => void; busy: boolean }) {
   const { agents } = useStore();
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => { box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, []);
   const roles = agents.filter((a) => !a.base_agent_id && !a.builtin);
   const [v, setV] = useState({
     description: r.description, test_command: r.test_command, default_branch: r.default_branch ?? "", protected_branches: r.protected_branches.join(", "),
@@ -247,7 +293,7 @@ function RepoSettings({ repo: r, onSaved, onArchive, busy }: { repo: Repo; onSav
   const toggleRole = (id: string) => setV({ ...v, allowed_roles: v.allowed_roles.includes(id) ? v.allowed_roles.filter((x) => x !== id) : [...v.allowed_roles, id] });
   const id = (k: string) => `rs-${r.id}-${k}`;
   return (
-    <div className="repo-settings">
+    <div className="repo-settings" id={`repo-settings-${r.id}`} ref={box}>
       <div className="field"><label htmlFor={id("d")}>Description</label><input id={id("d")} className="text" value={v.description} maxLength={300} onChange={(e) => setV({ ...v, description: e.target.value })} placeholder="One line; the map run fills it in" /></div>
       <div className="repo-settings-row">
         <div className="field"><label htmlFor={id("b")}>Default branch</label><input id={id("b")} className="text" value={v.default_branch} onChange={(e) => setV({ ...v, default_branch: e.target.value })} /></div>
@@ -309,17 +355,24 @@ function ArchivedRepo({ repo: r, onChange }: { repo: Repo; onChange: () => void 
   );
 }
 
-function MapRoutine({ routine, onChange }: { routine: { id: string; enabled: boolean } | null; onChange: () => void }) {
+function MapRoutine({ routines, missing, onChange }: { routines: MapRoutineInfo[]; missing: string[]; onChange: () => void }) {
   const [error, setError] = useState<string | null>(null);
   return (
     <div className="map-routine">
       <div>
         <strong>Keep maps fresh</strong>
-        <p className="hint">A weekly routine re-checks each repo's map against new commits and updates what drifted.</p>
+        <p className="hint">A weekly routine per mapper re-checks the maps of the repos it maps against new commits and updates what drifted.</p>
       </div>
-      {routine
-        ? <a className="btn sm" href={`#/routines/${routine.id}`}>{routine.enabled ? "Weekly refresh: on" : "Weekly refresh: paused · open to enable"}</a>
-        : <button className="btn sm" onClick={() => api.mapRoutine().then(onChange).catch((e) => setError(e.message))}>Add "Refresh repo maps weekly" (paused)</button>}
+      <div className="map-routines">
+        {routines.map((r) => (
+          <a key={r.id} className="btn sm" href={`#/routines/${r.id}`}>{r.agent}: {r.enabled ? "on" : "paused · open to enable"}</a>
+        ))}
+        {missing.length > 0 && (
+          <button className="btn sm" onClick={() => api.mapRoutine().then(onChange).catch((e) => setError(e.message))}>
+            Add weekly refresh for {missing.join(", ")} (paused)
+          </button>
+        )}
+      </div>
       {error && <div className="error-box">{error}</div>}
     </div>
   );
@@ -339,6 +392,18 @@ function AddRepo({ onDone, onCancel }: { onDone: () => void; onCancel: () => voi
       </div>
       {tab === "account" ? <FromAccount onDone={onDone} /> : <ByUrl onDone={onDone} />}
     </section>
+  );
+}
+
+/** The add forms' "Who maps it?" (a mapper outside the chosen agents is dropped). */
+function MapperField({ value, allowed, onChange }: { value: string | null; allowed: string[]; onChange: (id: string | null) => void }) {
+  useEffect(() => { if (value && allowed.length && !allowed.includes(value)) onChange(null); }, [allowed.join(",")]);
+  return (
+    <label className="field">
+      <span style={{ fontWeight: 500 }}>Who maps it?</span>
+      <MapperPicker value={value} allowed={allowed} onChange={onChange} />
+      <span className="hint">The map (architecture and features) is written by this agent and kept fresh by it. Different repos suit different crews.</span>
+    </label>
   );
 }
 
@@ -362,6 +427,7 @@ function FromAccount({ onDone }: { onDone: () => void }) {
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<AccountRepo | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
+  const [mapper, setMapper] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = (refresh = false) => { setError(null); api.availableRepos(refresh).then(setData).catch((e) => setError(e.message)); };
   useEffect(() => load(), []);
@@ -372,7 +438,7 @@ function FromAccount({ onDone }: { onDone: () => void }) {
   const add = async () => {
     if (!picked) return;
     setBusy(true); setError(null);
-    try { await api.addRepo({ url: picked.url, default_branch: picked.default_branch ?? undefined, allowed_roles: roles, description: picked.description }); onDone(); } catch (e: any) { setError(e.message); setBusy(false); }
+    try { await api.addRepo({ url: picked.url, default_branch: picked.default_branch ?? undefined, allowed_roles: roles, description: picked.description, mapper_role_id: mapper }); onDone(); } catch (e: any) { setError(e.message); setBusy(false); }
   };
   if (data && data.accounts.length === 0) {
     return <div className="add-repo-body"><p className="hint">No code-hosting account is connected. Connect GitHub, GitLab or Bitbucket on the <a href="#/integrations">Integrations</a> page, or add a repo by its URL.</p></div>;
@@ -401,8 +467,9 @@ function FromAccount({ onDone }: { onDone: () => void }) {
         <div className="add-repo-confirm">
           <p><strong>{picked.full_name}</strong> <span className="hint">· {picked.default_branch ?? "default branch from the remote"}</span></p>
           <RolesPicker value={roles} onChange={setRoles} />
+          <MapperField value={mapper} allowed={roles} onChange={setMapper} />
           <button className="btn primary" disabled={busy} onClick={add}>{busy ? "Adding…" : `Add and clone ${picked.full_name}`}</button>
-          <p className="hint">It's cloned, then an onboarding task maps it for the team.</p>
+          <p className="hint">It's cloned, then {mapper ? "that agent maps it" : "the helper picks who maps it and they map it"} for the team.</p>
         </div>
       )}
     </div>
@@ -413,6 +480,7 @@ function ByUrl({ onDone }: { onDone: () => void }) {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
+  const [mapper, setMapper] = useState<string | null>(null);
   const [check, setCheck] = useState<Awaited<ReturnType<typeof api.checkRepo>> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -423,7 +491,7 @@ function ByUrl({ onDone }: { onDone: () => void }) {
   };
   const add = async () => {
     setBusy("add"); setError(null);
-    try { await api.addRepo({ url: url.trim(), name: name.trim() || undefined, default_branch: check?.default_branch ?? undefined, allowed_roles: roles }); onDone(); } catch (e: any) { setError(e.message); setBusy(null); }
+    try { await api.addRepo({ url: url.trim(), name: name.trim() || undefined, default_branch: check?.default_branch ?? undefined, allowed_roles: roles, mapper_role_id: mapper }); onDone(); } catch (e: any) { setError(e.message); setBusy(null); }
   };
   // No access: a setup request (the same path agents use), started at once since the owner asked.
   const getAccess = async () => {
@@ -469,6 +537,7 @@ function ByUrl({ onDone }: { onDone: () => void }) {
             {check.taken && name === check.name && <span className="hint">That name is taken; pick another.</span>}
           </div>
           <RolesPicker value={roles} onChange={setRoles} />
+          <MapperField value={mapper} allowed={roles} onChange={setMapper} />
           <button className="btn primary" disabled={!!busy} onClick={add}>{busy === "add" ? "Adding…" : "Add and clone"}</button>
         </div>
       )}

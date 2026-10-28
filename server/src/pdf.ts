@@ -12,7 +12,7 @@ import type { FastifyInstance } from "fastify";
  * answers 501 and the portal falls back to the browser's print dialog ("Save as PDF").
  */
 
-const MAX_HTML = 4 * 1024 * 1024;
+const MAX_HTML = 25 * 1024 * 1024; // documents' images come embedded (data: URLs)
 const TIMEOUT_MS = 45_000;
 
 export function findChrome(): string | null {

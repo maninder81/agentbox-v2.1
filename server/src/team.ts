@@ -16,6 +16,7 @@ import { isSetupAgent } from "./setup.ts";
 import { isOrchestrator } from "./roleGuards.ts";
 import { crewIdOf, crewName, crewmates, sameCrew } from "./crews.ts";
 import { linksOf, readLinked } from "./linkedWork.ts";
+import { askGroupLead, describeWorkspaces, finishWorkspace, launchWorkspace, ledGroup, messageWorkspace, postToGroup } from "./groupWork.ts";
 import { roadmapsOf } from "./roadmaps.ts";
 import { cachedIntegrations, isConnected, mappedIntegrations } from "./integrations.ts";
 import { LIMITS as PLAN_LIMITS, decidePlan, getPlan, plansFor, submitPlan, type Decision } from "./plans.ts";
@@ -28,6 +29,7 @@ import { LIMITS as RM_LIMITS, STATUSES as RM_STATUSES, createRoadmap, itemsOf as
  */
 
 export const LIMITS = { depth: 3, handoffsPerTurn: 6 };
+const GROUP_LEAD_TOOLS = new Set(["launch_workspace", "list_workspaces", "message_workspace", "finish_workspace", "post_to_group"]);
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const refuse = (t: string) => ({ content: [{ type: "text" as const, text: t }], isError: true });
@@ -238,7 +240,9 @@ export function teamServer(agent: Agent, taskId: string) {
     version: "1.0.0",
     instructions: "agentbox team tools: how agents on this team hand work to each other.",
     // The helper proposes skills with its own tool (straight to an approval card), not as a draft.
-    tools: teamTools(agent, taskId).filter((t) => !(isSetupAgent(agent) && t.name === "propose_skill")),
+    tools: teamTools(agent, taskId).filter((t) => !(isSetupAgent(agent) && t.name === "propose_skill"))
+      // A group's lead runs its workspaces; nobody else sees those tools.
+      .filter((t) => !GROUP_LEAD_TOOLS.has(t.name) || !!ledGroup(agent)),
   });
 }
 
@@ -294,6 +298,54 @@ export function teamTools(agent: Agent, taskId: string) {
           } catch (e: any) {
             return refuse(e.message);
           }
+        },
+      ),
+
+      // --- a group's lead: workspaces launched from the group (groupWork.ts) ---
+      tool(
+        "launch_workspace",
+        "Group lead only: turn one independent item the owner asked for into its own workspace (a task room under Work), led by an agent of your crew. It becomes a step on the group's roadmap. Its lead's first reply comes back to you.",
+        {
+          title: z.string().describe("Short title (the roadmap step), e.g. 'Payments: remove dead code'"),
+          brief: z.string().describe("Everything its lead needs: goal, scope, constraints, repos, what done looks like, how to report"),
+          lead: z.string().optional().describe("Which agent of your crew leads it (default: your own agent, as a fresh task)"),
+          repos: z.array(z.string()).optional().describe("Registered repos it works on"),
+          after: z.array(z.string()).optional().describe("Roadmap step ids this one waits for"),
+        },
+        async (args) => {
+          try {
+            const inst = launchWorkspace(agent, taskId, args);
+            return text(`Launched "${args.title}" as ${inst.name} (workspace ${inst.id}); it's on the group's roadmap. Its first report comes back to you.`);
+          } catch (e: any) { return refuse(e.message); }
+        },
+      ),
+      tool("list_workspaces", "Group lead only: the group's workspaces and where each stands (lead, status, roadmap, questions waiting on you).", {}, async () => {
+        const g = ledGroup(agent);
+        return g ? text(describeWorkspaces(g.id)) : refuse("Only a group's lead has workspaces.");
+      }),
+      tool(
+        "message_workspace",
+        "Group lead only: instructions, a correction or an answer to a workspace's lead. Their reply comes back to you.",
+        { workspace: z.string().describe("Its title, step id or lead's name"), text: z.string() },
+        async ({ workspace, text: body }) => {
+          try { const to = messageWorkspace(agent, taskId, workspace, body); return text(`Sent to ${to.name}; their reply comes back to you.`); }
+          catch (e: any) { return refuse(e.message); }
+        },
+      ),
+      tool(
+        "finish_workspace",
+        "Group lead only: mark a workspace done once its work is really finished (its PRs merged, nothing running). Its step on the roadmap is done; its history stays.",
+        { workspace: z.string() },
+        async ({ workspace }) => {
+          try { const r = finishWorkspace(agent, workspace); return text(`"${r.title}" is done.`); } catch (e: any) { return refuse(e.message); }
+        },
+      ),
+      tool(
+        "post_to_group",
+        "Group lead only: post a short note to the group (a status, a finished item, a decision you need), from outside it, e.g. after a workspace's report. Nobody is woken.",
+        { text: z.string() },
+        async ({ text: body }) => {
+          try { postToGroup(agent, body); return text("Posted."); } catch (e: any) { return refuse(e.message); }
         },
       ),
 
@@ -411,6 +463,11 @@ export function teamTools(agent: Agent, taskId: string) {
         async ({ question }) => {
           const q = String(question ?? "").trim();
           if (!q) return refuse("Say what you need.");
+          // In a workspace a group launched, the group's lead answers first.
+          const groupLead = askGroupLead(agent, taskId, q);
+          if (groupLead) {
+            return text(`It went to ${groupLead}, the lead of the group that launched this work: they decide it, or take it to the owner if it's theirs. Their answer comes back to you as a message. Carry on with anything that doesn't depend on it, or end your turn.`);
+          }
           const root = rootOf(agent);
           raiseAttention("question", agent.id, taskId, root.created_by === "owner" ? root.id : null, `${agent.name} asks: ${q}`);
           return text("The owner has it in 'needs you'. Put the same question, with context, in your reply, then carry on with anything that doesn't depend on the answer, or end your turn.");

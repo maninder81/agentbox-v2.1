@@ -39,7 +39,7 @@ steps:
       Then save it in the terminal (it's read from stdin; it never goes through the portal):
         `agentbox secret set bitbucket.env`
       and type either `BITBUCKET_EMAIL=<your email>` and `BITBUCKET_API_TOKEN=<token>` (two lines),
-      or `BITBUCKET_ACCESS_TOKEN=<token>`, then Ctrl-D.
+      or `BITBUCKET_ACCESS_TOKEN=<token>`, then Enter on an empty line.
     copy: "agentbox secret set bitbucket.env"
     check: "agentbox-bitbucket check"
   - id: verify

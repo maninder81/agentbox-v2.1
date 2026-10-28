@@ -163,7 +163,7 @@ export function TaskTitle({ agent }: { agent: Agent }) {
 
 /** "coder#2 · Coder · started by tech-lead#1 · in Partner API keys" */
 export function TaskOrigin({ agent }: { agent: Agent }) {
-  const { everyone } = useStore();
+  const { everyone, groups } = useStore();
   const by = agent.created_by;
   const creator = by && !["owner"].includes(by) && !by.includes(":") ? everyone.find((a) => a.id === by) : undefined;
   const root = agent.parent_instance_id ? rootOfLocal(agent, everyone) : undefined;
@@ -173,6 +173,7 @@ export function TaskOrigin({ agent }: { agent: Agent }) {
       {by === "owner" && " · started by you"}
       {by?.startsWith("routine:") && " · routine"}
       {by?.startsWith("group:") && " · group"}
+      {by?.startsWith("glead:") && <> · launched from <a href={`#/groups/${by.slice(6)}`}>#{groups.find((g) => g.id === by.slice(6))?.name ?? "a group"}</a></>}
       {creator && <> · started by <a href={`#/agents/${creator.id}`}>{creator.name}</a></>}
       {root && root.id !== agent.id && <> · in <a href={`#/work/${root.id}`}>{root.label ?? root.name}</a></>}
     </>
@@ -354,6 +355,19 @@ function Input({ message, task, active }: { message: Message; task?: Task; activ
         <div>
           <div className="msg-meta"><strong>You</strong><time dateTime={message.created_at}>{relTime(message.created_at)}</time></div>
           <div className="prose" style={{ whiteSpace: "pre-wrap" }}>{message.content}</div>
+        </div>
+      </div>
+    );
+  }
+  if (message.author.startsWith("guest:")) {
+    // A guest the owner shared this work with (shares.ts).
+    const name = message.author.slice(6);
+    return (
+      <div className="msg" data-msg-id={message.id} data-author={message.author}>
+        <span className="avatar you-avatar guest-avatar" style={{ width: 28, height: 28, fontSize: 12 }} aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
+        <div style={{ minWidth: 0 }}>
+          <div className="msg-meta"><strong>{name}</strong><span className="tag">guest</span><time dateTime={message.created_at}>{relTime(message.created_at)}</time></div>
+          <Markdown text={message.content} />
         </div>
       </div>
     );

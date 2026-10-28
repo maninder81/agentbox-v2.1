@@ -11,6 +11,7 @@ import { parse, parseDocument, stringify } from "yaml";
 import {
   integrationState, normalizeIntegration, parseAssignments, remainingGates, render, renderContext, stepViews, validateSettings,
 } from "./integrations.mjs";
+import { readSecretTty } from "./secret-input.mjs";
 
 // The portal and the guide run with UMask=0077, and their agents' sudo inherits it: as root, system
 // files (the config, apt keyrings, units) must get normal modes, or the agent user and apt can't read them.
@@ -922,6 +923,7 @@ const USAGE_REPO = `  repo list [--json]                   the repos agents work
   repo remove <name> [--keep-unpushed] archive it (refused while open tasks use it)`;
 
 const USAGE = `usage: agentbox <command>
+${bold("System")} (on the VM)
   status [--json]                      base modules and integrations (checks), services, listeners
   config get [<key>]                   e.g. agentbox config get paths.secrets
   config set <key> <value>             e.g. agentbox config set access tailscale (root)
@@ -941,11 +943,57 @@ ${USAGE_REPO}
   selftest                             the security self-test
   guide                                the setup guide`;
 
+/**
+ * Portal commands (cli/portal.mjs: work, chat, routines, groups, crews, agents…) run anywhere: on your
+ * computer through a profile (agentbox login), or here with the local token. System commands (module,
+ * config, secret, update, services, the VM's repo/integration admin) stay on the VM.
+ */
+const SYSTEM_ONLY = new Set(["config", "module", "secret", "update", "start", "restart", "status", "selftest", "guide", "integration"]);
+function portalRoute(argv) {
+  const [cmd, ...rest] = argv;
+  const onVm = fs.existsSync(CONFIG);
+  const profile = argv.includes("--profile") || !!process.env.AGENTBOX_PROFILE;
+  if (cmd === undefined) return onVm && !profile ? null : ["dash"];
+  if (cmd === "stop") return rest.some((a) => !a.startsWith("-")) ? argv : null; // stop <task>; plain `stop` is the services
+  if (cmd === "api" || cmd === "repo" || cmd === "repos") {
+    if (onVm && !profile) return null;
+    if (cmd === "api") return argv;
+    // On your computer, `repo …` is the portal's repo admin.
+    const [sub, ...more] = rest;
+    if (sub === undefined || sub === "list") return ["repos", ...more];
+    return ["repo-admin", { remove: "archive", remap: "map" }[sub] ?? sub, ...more];
+  }
+  if (SYSTEM_ONLY.has(cmd)) return null;
+  return argv;
+}
+
 async function main(argv) {
+  // --profile <name> anywhere picks the portal (the same as AGENTBOX_PROFILE).
+  const pi = argv.indexOf("--profile");
+  if (pi >= 0) {
+    if (!argv[pi + 1]) fail("--profile needs a name (agentbox profiles)");
+    process.env.AGENTBOX_PROFILE = argv[pi + 1];
+    argv = [...argv.slice(0, pi), ...argv.slice(pi + 2)];
+  }
   const [cmd, sub, ...rest] = argv;
+  const routed = cmd === "help" || cmd === "-h" || cmd === "--help" ? null : portalRoute(argv);
+  if (routed) {
+    const { portalMain, PORTAL_COMMANDS } = await import("./portal.mjs");
+    if (PORTAL_COMMANDS.has(routed[0])) {
+      const code = await portalMain(routed, { localConf: () => (fs.existsSync(CONFIG) ? cfg() : null) });
+      if (code !== null) return code;
+    }
+  }
   switch (cmd) {
-    case undefined: case "help": case "-h": case "--help":
-      console.log(USAGE); return 0;
+    case undefined: case "help": case "-h": case "--help": {
+      const { PORTAL_USAGE, portalMain } = await import("./portal.mjs");
+      if (cmd === "help" && sub) return portalMain(["help", sub, ...rest]);
+      console.log(`${USAGE}
+
+${bold("Portal commands")} (agentbox help <command>)
+${PORTAL_USAGE}`);
+      return 0;
+    }
 
     case "config": {
       if (sub === "get") {
@@ -1047,12 +1095,12 @@ async function main(argv) {
       const me = os.userInfo().username;
       if (!isRoot() && me !== user) asRoot(argv); // stdin is inherited through sudo
       const tty = process.stdin.isTTY;
-      if (tty) process.stderr.write(`Paste or type the value for ${name}, then press Enter and Ctrl-D (input is hidden):\n`);
       let value;
-      const echo = (on) => tty && spawnSync("stty", [on ? "echo" : "-echo"], { stdio: ["inherit", "ignore", "ignore"] });
-      echo(false); // a secret never shows on screen (nor in the helper's view of the terminal)
-      try { value = readStdin(); } finally { echo(true); if (tty) process.stderr.write("\n"); }
-      if (!value.length) fail("nothing on stdin; nothing saved");
+      if (tty) {
+        value = await readSecretTty(name);
+        if (value === null) fail("cancelled; nothing saved");
+      } else value = readStdin();
+      if (!value.length) fail("nothing entered; nothing saved");
       const root = conf.paths?.secrets ?? "/secrets";
       const file = path.join(root, name);
       if (!file.startsWith(root + path.sep)) fail("bad secret name");
@@ -1222,7 +1270,7 @@ async function status(json) {
 // Exit only once stdout is flushed: piped output is written asynchronously, and exiting straight away
 // cut large replies short (e.g. `agentbox api /skills | …`).
 main(process.argv.slice(2)).then((code) => process.stdout.write("", () => process.exit(code ?? 0)), (e) => {
-  if (e instanceof Fail) { console.error(`agentbox: ${e.message}`); process.exit(1); }
+  if (e instanceof Fail || e?.constructor?.name === "Fail") { console.error(`agentbox: ${e.message}`); process.exit(1); }
   console.error(e);
   process.exit(1);
 });

@@ -168,15 +168,50 @@ function linkPaths(html: string, home?: string) {
   return tpl.innerHTML;
 }
 
-/** Markdown as sanitized HTML (what the reader shows; also what "Download PDF" prints). */
-export const markdownHtml = (text: string) => DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+/**
+ * Relative image and link paths in a document (e.g. `![Scores](report-img/11-scores.png)`) point next
+ * to the document itself: served through /api/file from its folder, not from the portal's own URL.
+ */
+export function resolveRelative(html: string, base?: string) {
+  if (!base || !/(src|href)="(?![a-z][a-z0-9+.-]*:|\/|#)/i.test(html)) return html;
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const abs = (rel: string) => {
+    let p = rel.split(/[?#]/)[0];
+    try { p = decodeURIComponent(p); } catch { /* keep it as written */ }
+    const parts: string[] = [];
+    for (const seg of `${base}/${p}`.split("/")) {
+      if (!seg || seg === ".") continue;
+      if (seg === "..") parts.pop(); else parts.push(seg);
+    }
+    return "/" + parts.join("/");
+  };
+  const relative = (v: string | null) => !!v && !/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(v);
+  for (const img of tpl.content.querySelectorAll("img")) {
+    const src = img.getAttribute("src");
+    if (relative(src)) img.setAttribute("src", `/api/file?path=${encodeURIComponent(abs(src!))}`);
+  }
+  for (const a of tpl.content.querySelectorAll("a")) {
+    const href = a.getAttribute("href");
+    if (!relative(href)) continue;
+    const full = abs(href!);
+    a.setAttribute("href", `/api/file?path=${encodeURIComponent(full)}`);
+    a.classList.add("file-link");
+    a.dataset.filePath = full;
+  }
+  return tpl.innerHTML;
+}
+
+/** Markdown as sanitized HTML (what the reader shows; also what "Download PDF" prints). `base`: the document's folder. */
+export const markdownHtml = (text: string, base?: string) => resolveRelative(DOMPurify.sanitize(marked.parse(text, { async: false }) as string), base);
 /** Sanitized HTML of an HTML document, for printing (no scripts, forms or remote frames). */
 export const sanitizeHtml = (html: string) => DOMPurify.sanitize(html, { FORBID_TAGS: ["form", "iframe", "object", "embed"] });
 
-export function Markdown({ text, streaming = false, home }: { text: string; streaming?: boolean; home?: string }) {
+/** `base`: the folder of the document being shown, for its relative images and links. */
+export function Markdown({ text, streaming = false, home, base }: { text: string; streaming?: boolean; home?: string; base?: string }) {
   const html = useMemo(
-    () => markFileLinks(linkPaths(DOMPurify.sanitize(marked.parse(text, { async: false }) as string), home)),
-    [text, home],
+    () => markFileLinks(linkPaths(resolveRelative(DOMPurify.sanitize(marked.parse(text, { async: false }) as string), base), home)),
+    [text, home, base],
   );
   // Images (e.g. attached screenshots) open full size in a new tab.
   const openImage = (e: React.MouseEvent) => {

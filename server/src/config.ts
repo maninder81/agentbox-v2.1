@@ -21,7 +21,7 @@ export const MODULE_IDS = [
   "core", "claude", "access", "display", "terminal",
   // integrations (§10.2)
   "github", "gitlab", "bitbucket", "aws", "gcp", "azure", "kubernetes", "db-tunnel", "env-files",
-  "voice", "mobile", "mobile-app", "push", "teams", "slack", "bench", "onshape",
+  "voice", "mobile", "mobile-app", "push", "teams", "slack", "bench", "onshape", "ngrok",
 ] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 /** Always on, whatever the file says. */
@@ -41,8 +41,11 @@ export type Config = {
     /** Integration settings and rendered prompt summaries (§10.2): <id>.yaml, <id>.summary.md. */
     integrations: string;
   };
-  /** apps: the hosting gateway (hosting.ts); its services listen on apps+10 … apps+109. */
-  ports: { portal: number; screen: number; terminal: number; gateway: number; guide: number; bench: number; apps: number };
+  /**
+   * apps: the hosting gateway (hosting.ts); its services listen on apps+10 … apps+109.
+   * share: the guest server for shared work (shareServer.ts), reached only through the ngrok tunnel.
+   */
+  ports: { portal: number; screen: number; terminal: number; gateway: number; guide: number; bench: number; apps: number; share: number };
   modules: Record<ModuleId, boolean>;
   tailscale: { hostname: string };
   cloudflare: { hostname: string; team_domain: string; aud: string };
@@ -70,13 +73,13 @@ const FILE_DEFAULTS: Omit<Config, "source"> = {
     src: "/opt/agentbox/src", app: "/opt/agentbox/app", data: "/opt/agentbox/data", work: "/work", agents: "/agents",
     team: "/team", skills: "/skills", secrets: "/secrets", integrations: "/etc/agentbox/integrations",
   },
-  ports: { portal: 7700, screen: 7701, terminal: 7702, gateway: 7710, guide: 7699, bench: 7740, apps: 7790 },
+  ports: { portal: 7700, screen: 7701, terminal: 7702, gateway: 7710, guide: 7699, bench: 7740, apps: 7790, share: 7785 },
   modules: {
     core: true, claude: true, access: true, display: true, terminal: true,
     // Integrations are off until connected (setup/config.default.yaml).
     github: false, gitlab: false, bitbucket: false, aws: false, gcp: false, azure: false, kubernetes: false,
     "db-tunnel": false, "env-files": false, voice: false, mobile: false, "mobile-app": false, push: false,
-    teams: false, slack: false, bench: false, onshape: false,
+    teams: false, slack: false, bench: false, onshape: false, ngrok: false,
   },
   tailscale: { hostname: "" },
   cloudflare: { hostname: "", team_domain: "", aud: "" },

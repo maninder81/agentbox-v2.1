@@ -27,7 +27,7 @@ test("route: a PDF attachment named after the document; 501 without Chromium; em
   assert.match(printed, /<p>x<\/p>/);
   r = await app.inject({ method: "POST", url: "/api/pdf", payload: { html: "  " } });
   assert.equal(r.statusCode, 400);
-  r = await app.inject({ method: "POST", url: "/api/pdf", payload: { html: "x".repeat(4 * 1024 * 1024 + 10) } });
+  r = await app.inject({ method: "POST", url: "/api/pdf", payload: { html: "x".repeat(25 * 1024 * 1024 + 10) } });
   assert.equal(r.statusCode, 413);
   await app.close();
   const none = Fastify();

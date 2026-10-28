@@ -1,0 +1,41 @@
+id: ngrok
+kind: integration
+category: connectivity
+title: Share work (ngrok)
+description: Share one piece of work with someone outside your tailnet through a link that expires (6 hours, a day or a week), read-only or able to chat with the agents. The link goes through an ngrok tunnel that runs only while a link is live, to a guest page that shows that one piece of work and nothing else.
+optional: true
+depends: [core]
+instructions:
+  summary: |
+    Sharing (ngrok): only the owner shares work, from the portal. Agents never run ngrok or open tunnels of their own.
+# Nobody runs ngrok but the portal itself: no role is mapped, so the integration guard refuses `ngrok` for every agent.
+commands: [ngrok]
+default_roles: []
+account: "grep -q '^NGROK_DOMAIN=.' \"$(agentbox config get paths.secrets)/ngrok.env\" && sed -n 's/^NGROK_DOMAIN=//p' \"$(agentbox config get paths.secrets)/ngrok.env\" || echo 'ngrok (its free dev domain)'"
+revoke: |
+  Revoke the authtoken in the ngrok dashboard (https://dashboard.ngrok.com/authtokens) and delete
+  `$(agentbox config get paths.secrets)/ngrok.env` on the VM. Links already made stop working when the tunnel stops.
+steps:
+  - id: install
+    title: Install the ngrok agent on the VM
+    run: install.sh
+    check: "command -v ngrok"
+  - id: token
+    title: Save your ngrok authtoken (and domain) on the VM
+    human: true
+    instructions: |
+      1. Sign in at https://dashboard.ngrok.com (a free account works) and copy your authtoken from
+         https://dashboard.ngrok.com/get-started/your-authtoken.
+      2. Optional but recommended: your domain from https://dashboard.ngrok.com/domains (free accounts get one,
+         e.g. something.ngrok-free.app). With it, links keep the same address across restarts.
+      3. Save them on the VM in this terminal (never in the chat):
+           `agentbox secret set ngrok.env`
+         then paste or type these lines (each shows masked), then Enter on an empty line:
+           NGROK_AUTHTOKEN=<your authtoken>
+           NGROK_DOMAIN=<your domain, or leave this line out>
+      The tunnel runs only while a shared link is live, and only reaches the guest page for that work.
+    copy: "agentbox secret set ngrok.env"
+    check: "grep -q '^NGROK_AUTHTOKEN=.' \"$(agentbox config get paths.secrets)/ngrok.env\""
+  - id: verify
+    title: The authtoken works (a short test tunnel)
+    run: verify.sh

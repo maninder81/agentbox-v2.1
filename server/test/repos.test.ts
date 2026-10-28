@@ -59,7 +59,7 @@ function makeRemote(name: string, branch = "main") {
 }
 
 const { run, get, all, newId, now } = await import("../src/db.ts");
-const { subscribe } = await import("../src/bus.ts");
+const { publish, subscribe } = await import("../src/bus.ts");
 const { setPaused } = await import("../src/control.ts");
 setPaused(true); // nothing runs Claude
 const A = await import("../src/agents.ts");
@@ -423,6 +423,69 @@ test("onboarding: tech-lead maps it read-only in a worktree; repo_map_done needs
   assert.match(R.onboardingPrompt(R.getRepo("web")!, "/x"), /docs\/agent\//);
 });
 
+test("who maps a repo: the owner's choice; else the helper picks a crew lead; else the only lead", async () => {
+  const C = await import("../src/crews.ts");
+  const robo = mk("robotics-lead", { can_scale: true });
+  const sw = C.createCrew({ name: "Software", members: [lead.id, coder.id, writer.id] });
+  const rc = C.createCrew({ name: "Robotics", members: [robo.id] });
+  const web = () => R.getRepo("web")!;
+  try {
+    assert.deepEqual(R.mapperCandidates(web()).map((a) => a.name).sort(), ["robotics-lead", "tech-lead"], "each crew's lead");
+    // The owner's choice: any agent allowed to use it, by name or id; one that isn't is refused.
+    assert.equal(R.updateRepo("web", { mapper_role_id: "robotics-lead" }).mapper_role_id, robo.id);
+    assert.equal(web().mapper_note, "Chosen by the owner");
+    assert.throws(() => R.updateRepo("web", { mapper_role_id: "nobody" }), /can't map it/);
+    const sent: { to: string; text: string }[] = [];
+    const send = (i: string, _t: string, text: string) => sent.push({ to: i, text });
+    const byRobo = R.startOnboarding("web", { send });
+    assert.equal(A.getAgent(byRobo.id)!.base_agent_id, robo.id);
+    const layer = RU.instructionLayers(task(robo.id, "Look")).find((l) => l.id === "repos")!.text;
+    assert.match(layer, /\*\*web\*\* · \*\*you map it\*\*/);
+    A.retireReplica(byRobo.id);
+    await waitFor(() => web().map_status !== "running");
+
+    // Nobody chosen and two crew leads: the helper looks and chooses; only while it was asked to.
+    R.updateRepo("web", { mapper_role_id: null });
+    const helperTask = R.startOnboarding("web", { send });
+    assert.equal(A.getAgent(helperTask.id)!.base_agent_id, setup.id);
+    assert.equal(web().map_status, "choosing");
+    assert.match(sent.at(-1)!.text, /robotics-lead\*\* \(robotics-lead; Robotics crew\)/);
+    assert.match(sent.at(-1)!.text, /choose_repo_mapper/);
+    assert.throws(() => R.startOnboarding("web", { send }), /helper is choosing/);
+    assert.throws(() => R.chooseMapper(task(setup.id, "other"), "web", "tech-lead", "x"), /weren't asked/);
+    assert.throws(() => R.chooseMapper(helperTask, "web", "nobody", "x"), /can't map it/);
+    const toolsOf = (await import("../src/setupTools.ts")).setupTools(helperTask, fakeTask(helperTask.id));
+    const chosen = await call(toolsOf, "choose_repo_mapper", { repo: "web", agent: "tech-lead", reason: "A Node web app with a React UI." });
+    assert.ok(!chosen.isError, chosen.content[0].text);
+    assert.equal(web().mapper_role_id, lead.id);
+    assert.equal(web().mapper_note, "Chosen by the helper: A Node web app with a React UI.");
+    assert.equal(web().map_status, "running");
+    const mapping = A.getAgent(web().map_task_id!)!;
+    assert.equal(mapping.base_agent_id, lead.id);
+    A.retireReplica(mapping.id);
+    await waitFor(() => web().map_status !== "running");
+
+    // A helper task that ends without choosing leaves it for the owner.
+    R.updateRepo("web", { mapper_role_id: null });
+    const quiet = R.startOnboarding("web", { send });
+    publish({ type: "task.updated", task: { id: "t", agent_id: quiet.id, status: "done" } });
+    assert.equal(web().map_status, "error");
+    assert.match(web().map_error!, /didn't choose/);
+
+    // Only one lead allowed (the repo limited to the Software crew): it maps it, no helper.
+    R.updateRepo("web", { allowed_roles: ["coder", "tech-lead"], mapper_role_id: null });
+    const only = R.startOnboarding("web", { send });
+    assert.equal(A.getAgent(only.id)!.base_agent_id, lead.id);
+    assert.equal(web().mapper_note, "The only crew lead that can use it");
+    A.retireReplica(only.id);
+    await waitFor(() => web().map_status !== "running");
+  } finally {
+    R.updateRepo("web", { allowed_roles: [], mapper_role_id: null });
+    C.deleteCrew(sw.id);
+    C.deleteCrew(rc.id);
+  }
+});
+
 // --- accounts -------------------------------------------------------------------------------------
 test("account listing: gh / glab / Bitbucket JSON parsed, credentials stripped, added ones marked", async () => {
   const ghJson = JSON.stringify([
@@ -665,10 +728,14 @@ test("CLI: agentbox repo list | add | status | fetch | remap | remove against th
     // New Task's picker data and the map routine template (paused).
     const page = (await app.inject({ method: "GET", url: "/api/repos" })).json();
     assert.ok(page.repos.find((r: any) => r.name === "web").worktrees.length >= 1);
+    // One weekly refresh per mapper, each for the repos it maps.
     const routine = (await app.inject({ method: "POST", url: "/api/repos/map-routine" })).json();
-    assert.equal(routine.created, true);
+    assert.ok(routine.created.length >= 1, JSON.stringify(routine));
     const again = (await app.inject({ method: "GET", url: "/api/repos" })).json();
-    assert.equal(again.map_routine.enabled, false, "not enabled by default");
+    assert.ok(again.map_routines.length >= 1);
+    assert.ok(again.map_routines.every((r: any) => r.enabled === false), "not enabled by default");
+    assert.deepEqual(again.map_routines_missing, []);
+    assert.deepEqual((await app.inject({ method: "POST", url: "/api/repos/map-routine" })).json().created, [], "not twice");
   } finally {
     await app.close();
   }

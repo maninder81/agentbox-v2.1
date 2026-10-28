@@ -228,7 +228,10 @@ a.card:hover { border-color: var(--line-strong); }
 .prose pre { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 10px 12px; overflow-x: auto; }
 .prose pre code { background: none; padding: 0; }
 .prose table { border-collapse: collapse; display: block; overflow-x: auto; }
-.prose th, .prose td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.prose th, .prose td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; overflow-wrap: break-word; }
+/* Words in table cells break only where they must (break-word doesn't shrink a column to fit a
+   letter, as "anywhere" does); a wide table scrolls sideways. */
+.prose img { max-width: 100%; height: auto; }
 .prose blockquote { margin: 0; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
 .cursor::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; margin-left: 1px; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -1399,3 +1402,24 @@ select.text.crew-move { width: auto; flex: none; padding-top: 4px; padding-botto
 .attach-file { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 26px 0 10px; }
 .attach-ext { flex: none; font: 600 10px var(--mono); text-transform: uppercase; padding: 3px 5px; border-radius: 4px; background: var(--raised); color: var(--muted); }
 .attach-name { font-size: 12px; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+/* Repos: who maps a repo (MapperPicker), and the per-mapper weekly refreshes. */
+.mapper-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+select.text.mapper-picker { width: auto; max-width: 100%; padding-top: 4px; padding-bottom: 4px; }
+.map-routines { display: flex; flex-wrap: wrap; gap: 6px; }
+.map-state.m-choosing { color: var(--warn); }
+/* Group workspaces (GroupWorkspaces.tsx). */
+.gw-list { margin: 6px 0 0; }
+.gw-question { color: var(--warn); }
+/* Sharing a piece of work (components/Share.tsx). */
+.popover.share-panel { width: 360px; }
+.share-perms { display: grid; gap: 6px; }
+.share-perm { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-ctl); cursor: pointer; }
+.share-perm.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.share-perm input { margin-top: 3px; }
+.share-perm > span { display: flex; flex-direction: column; gap: 2px; }
+.share-url { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--raised); overflow-wrap: anywhere; font: 12px var(--mono); user-select: all; }
+.share-live-head { margin-top: 4px; }
+.share-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.share-list li { display: flex; align-items: center; gap: 8px; }
+.share-list-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.guest-avatar { background: color-mix(in srgb, var(--accent) 25%, var(--raised)); color: var(--text); }

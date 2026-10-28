@@ -15,9 +15,30 @@ const base = (name: string) => name.replace(/\.[A-Za-z0-9]{1,8}$/, "");
 
 async function source(path: string, kind: Printable, text: string | null) {
   const raw: string = text ?? await fetch(fileUrl(path)).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
-  if (kind === "markdown") return markdownHtml(raw);
+  if (kind === "markdown") return inlineImages(markdownHtml(raw, path.slice(0, path.lastIndexOf("/"))));
   if (kind === "html") return sanitizeHtml(raw);
   return `<pre class="pre-doc">${esc(raw)}</pre>`;
+}
+
+/** The PDF printer takes no network (data: images only): embed the document's own images. */
+async function inlineImages(html: string) {
+  if (!html.includes('src="/api/file?')) return html;
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  let total = 0;
+  for (const img of tpl.content.querySelectorAll<HTMLImageElement>('img[src^="/api/file?"]')) {
+    try {
+      const blob = await fetch(img.getAttribute("src")!).then((r) => (r.ok ? r.blob() : null));
+      if (!blob || !blob.type.startsWith("image/") || (total += blob.size) > 16 * 1024 * 1024) continue;
+      img.src = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+      });
+    } catch { /* leave it out of the PDF */ }
+  }
+  return tpl.innerHTML;
 }
 
 function save(blob: Blob, name: string) {

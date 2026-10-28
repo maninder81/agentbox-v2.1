@@ -6,6 +6,8 @@ import { publish, subscribe } from "./bus.ts";
 import { paths } from "./config.ts";
 import { dmThreadOf, getAgent, listAgents, slugify, spawnInstance, type Agent } from "./agents.ts";
 import { redactSecrets } from "./redact.ts";
+import { crewIdOf, crewName, getCrew } from "./crews.ts";
+import { setupRole } from "./setup.ts";
 
 /**
  * Repos (docs/V2-ARCHITECTURE.md, Changes (repos); docs/TRUSTED-AUTONOMY.md §6–7): the owner adds
@@ -64,6 +66,14 @@ run(`CREATE INDEX IF NOT EXISTS repo_worktrees_instance ON repo_worktrees(instan
 // The work's lead (an orchestrator role) may merge PRs into protected branches when CI is green (not epics):
 // on by default, so routine, non-breaking fixes don't wait for the owner.
 if (!all<{ name: string }>(`PRAGMA table_info(repos)`).some((c) => c.name === "lead_may_merge")) run(`ALTER TABLE repos ADD COLUMN lead_may_merge INTEGER NOT NULL DEFAULT 1`);
+// Who maps the repo (an agent, usually a crew's lead; the owner picks, or the helper does when asked) and why.
+for (const [col, type] of [["mapper_role_id", "TEXT"], ["mapper_note", "TEXT"]] as const) {
+  if (!all<{ name: string }>(`PRAGMA table_info(repos)`).some((c) => c.name === col)) run(`ALTER TABLE repos ADD COLUMN ${col} ${type}`);
+}
+// Repos mapped before the setting existed: whoever mapped them last keeps doing it.
+run(`UPDATE repos SET mapper_role_id = (SELECT base_agent_id FROM agents WHERE agents.id = repos.map_task_id), mapper_note = 'Mapped it before'
+     WHERE mapper_role_id IS NULL AND map_task_id IS NOT NULL
+       AND (SELECT base_agent_id FROM agents WHERE agents.id = repos.map_task_id) IN (SELECT id FROM agents WHERE base_agent_id IS NULL AND builtin IS NULL)`);
 
 export type Provider = "github" | "gitlab" | "bitbucket" | "other";
 export type RepoStatus = "cloning" | "ready" | "error" | "archived";
@@ -72,8 +82,11 @@ export type Repo = {
   description: string; test_command: string; protected_branches: string[]; allowed_roles: string[];
   agents_may_merge: boolean; agents_may_deploy: boolean; propose_map_pr: boolean; lead_may_merge: boolean;
   status: RepoStatus; last_fetch_at: string | null; error: string | null;
-  map_status: "none" | "running" | "ready" | "error"; map_updated_at: string | null; map_task_id: string | null; map_error: string | null;
+  /** choosing: the helper is picking who maps it (map_task_id is the helper's task). */
+  map_status: "none" | "choosing" | "running" | "ready" | "error"; map_updated_at: string | null; map_task_id: string | null; map_error: string | null;
   archive_path: string | null; archived_at: string | null; created_at: string;
+  /** The agent (role) that maps it; null: the helper picks one when it's first mapped. */
+  mapper_role_id: string | null; mapper_note: string | null;
 };
 export type WorktreeStatus = "pending" | "active" | "kept" | "removed" | "discarded" | "error";
 export type Worktree = {
@@ -313,6 +326,8 @@ export type AddRepoInput = {
   allowed_roles?: unknown; protected_branches?: unknown; agents_may_merge?: boolean; agents_may_deploy?: boolean;
   /** Start the onboarding (map) run once cloned (default true). */
   onboard?: boolean;
+  /** Who maps it (an agent); left out, the helper picks a crew lead when it's mapped. */
+  mapper_role_id?: string | null;
 };
 
 /** Register a repo and start cloning it (in the background; `repo.updated` / `repo.progress` events). */
@@ -331,6 +346,7 @@ export function addRepo(input: AddRepoInput, hooks: { onboard?: (name: string) =
   const branch = input.default_branch ? checkBranch(String(input.default_branch).trim()) : null;
   const protectedBranches = Array.isArray(input.protected_branches) ? input.protected_branches.map((b) => checkBranch(String(b).trim())) : null;
   const roles = resolveRoles(input.allowed_roles);
+  const mapper = input.mapper_role_id ? checkMapper(String(input.mapper_role_id), roles) : null;
   const repo = {
     id: newId(), name, url: p.url, provider: p.provider, default_branch: branch,
     description: String(input.description ?? "").trim().slice(0, 300), test_command: String(input.test_command ?? "").trim().slice(0, 300),
@@ -345,6 +361,7 @@ export function addRepo(input: AddRepoInput, hooks: { onboard?: (name: string) =
     repo.id, repo.name, repo.url, repo.provider, repo.default_branch, repo.description, repo.test_command, repo.protected_branches,
     repo.allowed_roles, repo.agents_may_merge, repo.agents_may_deploy, repo.status, repo.created_at,
   );
+  if (mapper) run(`UPDATE repos SET mapper_role_id = ?, mapper_note = 'Chosen by the owner' WHERE id = ?`, mapper.id, repo.id);
   changed(repo.id);
   const onboard = input.onboard !== false;
   void cloneRepo(repo.id).then((ok) => {
@@ -443,6 +460,8 @@ export async function fetchAll() {
 export type RepoPatch = Partial<{
   description: string; test_command: string; default_branch: string; protected_branches: unknown; allowed_roles: unknown;
   agents_may_merge: boolean; agents_may_deploy: boolean; propose_map_pr: boolean; lead_may_merge: boolean;
+  /** An agent's id or name; null or "": let the helper pick next time it's mapped. */
+  mapper_role_id: string | null;
 }>;
 
 export function updateRepo(name: string, patch: RepoPatch): Repo {
@@ -462,6 +481,11 @@ export function updateRepo(name: string, patch: RepoPatch): Repo {
   for (const k of ["agents_may_merge", "agents_may_deploy", "propose_map_pr", "lead_may_merge"] as const) {
     if (patch[k] !== undefined) next[k] = patch[k] === true;
   }
+  if (patch.mapper_role_id !== undefined) {
+    const m = patch.mapper_role_id ? checkMapper(String(patch.mapper_role_id), next.allowed_roles) : null;
+    if ((m?.id ?? null) !== repo.mapper_role_id) { next.mapper_role_id = m?.id ?? null; next.mapper_note = m ? "Chosen by the owner" : null; }
+  }
+  run(`UPDATE repos SET mapper_role_id = ?, mapper_note = ? WHERE id = ?`, next.mapper_role_id, next.mapper_note, repo.id);
   run(
     `UPDATE repos SET description = ?, test_command = ?, default_branch = ?, protected_branches = ?, allowed_roles = ?,
        agents_may_merge = ?, agents_may_deploy = ?, propose_map_pr = ?, lead_may_merge = ? WHERE id = ?`,
@@ -783,11 +807,40 @@ export function mapFiles(name: string) {
 }
 
 /** Who maps a repo: tech-lead if it exists, otherwise a coding role, otherwise any role allowed on it. */
+/** The agents (roles) allowed to use a repo. */
+const allowedRoles = (allowed: string[]) =>
+  listAgents().filter((a) => !a.base_agent_id && !a.builtin && (allowed.length === 0 || allowed.includes(a.id)));
+
+/** An agent the owner (or the helper) names to map a repo: one allowed to use it. */
+function checkMapper(ref: string, allowed: string[]): Agent {
+  const k = ref.trim().toLowerCase().replace(/^@/, "");
+  const roles = allowedRoles(allowed);
+  const r = roles.find((a) => a.id === ref || a.slug === k || a.name.toLowerCase() === k);
+  if (!r) throw new Error(`"${ref}" can't map it: pick one of the agents allowed to use the repo (${roles.map((a) => a.name).join(", ") || "none"})`);
+  return r;
+}
+
+/** Who maps the repo: its chosen agent while that agent still exists and may use it. */
 export function onboardingRole(repo: Repo): Agent | undefined {
-  const roles = listAgents().filter((a) => !a.base_agent_id && !a.builtin && (repo.allowed_roles.length === 0 || repo.allowed_roles.includes(a.id)));
-  return roles.find((r) => /tech.?lead/i.test(`${r.slug} ${r.title}`))
-    ?? roles.find((r) => /cod(er|ing)|developer|engineer|dev\b/i.test(`${r.slug} ${r.title} ${r.summary}`))
-    ?? roles[0];
+  if (!repo.mapper_role_id) return undefined;
+  return allowedRoles(repo.allowed_roles).find((a) => a.id === repo.mapper_role_id);
+}
+
+/**
+ * The agents the helper chooses a mapper from: each crew's lead among the agents allowed to use the
+ * repo (its chosen lead, else its first planning agent, else its first agent), plus the same for the
+ * agents in no crew.
+ */
+export function mapperCandidates(repo: Repo): Agent[] {
+  const byCrew = new Map<string, Agent[]>();
+  for (const r of allowedRoles(repo.allowed_roles)) {
+    const k = crewIdOf(r) ?? "";
+    byCrew.set(k, [...(byCrew.get(k) ?? []), r]);
+  }
+  return [...byCrew.entries()].map(([crew, members]) => {
+    const chosen = crew ? getCrew(crew)?.lead_role_id : null;
+    return members.find((m) => m.id === chosen) ?? members.find((m) => m.can_scale) ?? members[0];
+  });
 }
 
 export function onboardingPrompt(repo: Repo, worktree: string) {
@@ -806,27 +859,79 @@ ${repo.propose_map_pr
 Report the architecture in a few lines and the main features you found.`;
 }
 
-/** Start (or restart) the onboarding run: a task for the mapping role, bound to the repo. */
-export function startOnboarding(name: string, deps?: { send: (instanceId: string, threadId: string, text: string) => void }) {
+/**
+ * Start (or restart) the onboarding run: a task for the repo's mapper, bound to the repo. With no mapper
+ * chosen, the helper picks one first (a quick look at the repo, then choose_repo_mapper starts the run);
+ * with only one agent that could, it's that one. Returns the task started (the mapper's, or the helper's).
+ */
+export function startOnboarding(name: string, deps?: { send?: (instanceId: string, threadId: string, text: string) => void; chosen?: boolean }) {
   const repo = getRepo(name);
   if (!repo) throw new Error("No such repo");
   if (repo.status !== "ready") throw new Error(`${name} isn't ready (${repo.status})`);
   if (repo.map_status === "running" && repo.map_task_id && live(repo.map_task_id)) {
     throw new Error(`${name} is already being mapped (${getAgent(repo.map_task_id)?.name})`);
   }
-  const role = onboardingRole(repo);
+  if (repo.map_status === "choosing" && repo.map_task_id && live(repo.map_task_id) && !deps?.chosen) {
+    throw new Error(`The helper is choosing who maps ${name}; pick one yourself on its card to skip that`);
+  }
+  const send = deps?.send ?? defaultSend;
+  let role = onboardingRole(repo);
   if (!role) {
-    setMap(repo.id, "error", "No agent can map it: create a tech-lead or coding agent, then Re-map.");
-    throw new Error("No agent can map it: create a tech-lead or coding agent first");
+    const candidates = mapperCandidates(repo);
+    if (!candidates.length) {
+      setMap(repo.id, "error", "No agent can map it: create an agent (or allow one to use the repo), then Map it.");
+      throw new Error("No agent can map it: create an agent first");
+    }
+    if (candidates.length > 1 && setupRole()) return askHelperToChoose(repo, candidates, send);
+    role = candidates[0];
+    run(`UPDATE repos SET mapper_role_id = ?, mapper_note = ? WHERE id = ?`, role.id, candidates.length === 1 ? "The only crew lead that can use it" : "Chosen automatically", repo.id);
   }
   const inst = spawnInstance(role.id, { label: `Map repo ${name}`, createdBy: "owner" });
   bindRepo(inst, name, "onboard");
   setMap(repo.id, "running", null, inst.id);
   const wt = inside(worktreesRoot(), repo.name, shortId(inst.id));
-  const send = deps?.send ?? defaultSend;
   send(inst.id, dmThreadOf(inst.id)!, onboardingPrompt(repo, wt));
   return inst;
 }
+
+/** The helper's task: look at the repo, choose which crew lead maps it (choose_repo_mapper starts the run). */
+function askHelperToChoose(repo: Repo, candidates: Agent[], send: (instanceId: string, threadId: string, text: string) => void) {
+  const helper = spawnInstance(setupRole()!.id, { label: `Choose who maps ${repo.name}`, createdBy: "owner" });
+  setMap(repo.id, "choosing", null, helper.id);
+  send(helper.id, dmThreadOf(helper.id)!, `[agentbox] The owner added the repo **${repo.name}** (${repo.url}) without saying who should map it. Choose the agent best suited to map it, from the nature of the repo.
+
+1. Take a quick, read-only look (a couple of minutes): the clone is ${clonePath(repo.name)}. Read the README and look at the
+   top-level files, folders and languages (e.g. \`git -C ${clonePath(repo.name)} ls-files | head -200\`). Don't install, build, run
+   or change anything there.
+2. Pick one of these (each crew's lead among the agents allowed to use it):
+${candidates.map((c) => `   - **${c.name}** (${c.title}; ${crewName(crewIdOf(c))} crew): ${c.summary}`).join("\n")}
+3. Call \`mcp__setup__choose_repo_mapper\` with repo "${repo.name}", the agent, and a one-sentence reason. That starts the mapping.
+
+Then tell the owner in one or two lines who maps it and why. If none fits, say so and don't choose: the owner picks one on the Repos page.`);
+  return helper;
+}
+
+/** The helper's choice (choose_repo_mapper): record who maps the repo and start the run. Only while it's choosing. */
+export function chooseMapper(helper: Agent, name: string, agentRef: string, reason: string) {
+  const repo = getRepo(name);
+  if (!repo) throw new Error(`No repo called "${name}"`);
+  if (repo.map_status !== "choosing" || repo.map_task_id !== helper.id) {
+    throw new Error(`You weren't asked to choose who maps ${name} (or the owner already did). The owner sets it on the Repos page.`);
+  }
+  const role = checkMapper(agentRef, repo.allowed_roles);
+  const why = String(reason ?? "").trim().replace(/\s+/g, " ").slice(0, 300);
+  run(`UPDATE repos SET mapper_role_id = ?, mapper_note = ? WHERE id = ?`, role.id, `Chosen by the helper${why ? `: ${why}` : ""}`, repo.id);
+  setMap(repo.id, "none", null, null);
+  return startOnboarding(name, { send: defaultSend, chosen: true });
+}
+
+// A helper task that ends without choosing leaves the repo for the owner to pick.
+subscribe((e) => {
+  if (e.type !== "task.updated" || !["done", "failed", "stopped"].includes(e.task?.status)) return;
+  for (const r of all<{ id: string }>(`SELECT id FROM repos WHERE map_status = 'choosing' AND map_task_id = ?`, e.task.agent_id)) {
+    setMap(r.id, "error", "The helper didn't choose who maps it. Pick an agent under \"Mapped by\", then Map it.");
+  }
+});
 let defaultSend: (instanceId: string, threadId: string, text: string) => void = () => { throw new Error("repos: no sender"); };
 /** runner.ts wires its sendMessage here (avoids an import cycle at load time). */
 export function setSender(fn: typeof defaultSend) { defaultSend = fn; }
@@ -871,7 +976,8 @@ before exploring it.
 ${repos.map((r) => {
   const map = r.map_status === "ready" ? `map: ${mapDir(r.name)}/ (start with AGENTS.md)` : r.map_status === "running" ? "map: being written" : "no map yet";
   const rules = [r.agents_may_merge ? "" : `no pushes to ${r.protected_branches.join(", ") || r.default_branch}; ${r.lead_may_merge ? "the work's lead merges routine PRs into it (CI green, no breaking changes; epics and risky changes go to the owner)" : "merges into it are the owner's"}`, r.agents_may_deploy ? "" : "no deploys"].filter(Boolean).join("; ");
-  return `- **${r.name}**${r.description ? `: ${r.description}` : ""} · default branch \`${r.default_branch}\`${r.test_command ? ` · tests: \`${r.test_command}\`` : ""} · ${map}${rules ? ` · ${rules}` : ""}`;
+  const mapsIt = r.mapper_role_id === role.id ? " · **you map it** (keep its map current)" : "";
+  return `- **${r.name}**${mapsIt}${r.description ? `: ${r.description}` : ""} · default branch \`${r.default_branch}\`${r.test_command ? ` · tests: \`${r.test_command}\`` : ""} · ${map}${rules ? ` · ${rules}` : ""}`;
 }).join("\n")}` : "";
     cached = { version, text };
     layerCache.set(role.id, cached);

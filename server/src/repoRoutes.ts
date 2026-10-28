@@ -2,7 +2,7 @@ import { memoryOf } from "./memory.ts";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { LOCAL_TOKEN_HEADER } from "./access.ts";
 import { GATEWAY_HEADER } from "./mobile.ts";
-import { listAgents } from "./agents.ts";
+import { getAgent, listAgents } from "./agents.ts";
 import { createRoutine, defaultTimezone, listRoutines } from "./routines.ts";
 import {
   RepoConflict, addRepo, archiveRepo, bindingsOf, checkAccess, cloneRepo, discardWorktree, fetchAll, fetchRepo, getRepo, getWorktree,
@@ -37,11 +37,27 @@ const mustRepo = (name: string) => {
 };
 
 export const MAP_ROUTINE_NAME = "Refresh repo maps weekly";
+/** The weekly map refreshes (one per mapper; an older single one counts too). */
+const mapRoutines = () => listRoutines().filter((r) => r.name === MAP_ROUTINE_NAME || r.name.startsWith(`${MAP_ROUTINE_NAME} · `));
+/** The agents that map at least one live, ready repo. */
+const mappersOf = () => {
+  const out = new Map<string, any>();
+  for (const r of listRepos({ archived: false }).filter((r) => r.status === "ready")) {
+    const m = onboardingRole(r);
+    if (m) out.set(m.id, m);
+  }
+  return [...out.values()];
+};
 
 export function registerRepoRoutes(app: FastifyInstance) {
   app.get("/api/repos", async () => {
-    const routine = listRoutines().find((r) => r.name === MAP_ROUTINE_NAME);
-    return { repos: listRepos().map((r) => ({ ...repoView(r), memory: r.status === "archived" ? null : memoryOf(r) })), map_routine: routine ? { id: routine.id, enabled: routine.enabled } : null };
+    const routines = mapRoutines();
+    return {
+      repos: listRepos().map((r) => ({ ...repoView(r), memory: r.status === "archived" ? null : memoryOf(r) })),
+      map_routines: routines.map((r) => ({ id: r.id, enabled: r.enabled, agent_id: r.agent_id, agent: getAgent(r.agent_id)?.name ?? "deleted agent" })),
+      // Mappers with no weekly refresh yet.
+      map_routines_missing: mappersOf().filter((m) => !routines.some((r) => r.agent_id === m.id)).map((m) => m.name),
+    };
   });
   app.get("/api/repos/available", async (req) => wrap(() => accountRepos({ refresh: (req.query as any)?.refresh === "1" })));
   app.post("/api/repos/check", async (req) => wrap(async () => {
@@ -78,18 +94,21 @@ export function registerRepoRoutes(app: FastifyInstance) {
   app.post("/api/repos/sweep", async () => sweep());
   app.get("/api/agents/:id/repos", async (req) => ({ repos: bindingsOf((req.params as any).id) }));
 
-  // The routine template: weekly map refresh, created paused (the owner enables it).
+  // The routine template: a weekly map refresh for each repo's mapper (each refreshes the repos it maps),
+  // created paused (the owner enables them).
   app.post("/api/repos/map-routine", async () => wrap(() => {
-    const existing = listRoutines().find((r) => r.name === MAP_ROUTINE_NAME);
-    if (existing) return { id: existing.id, created: false };
-    const ready = listRepos({ archived: false }).filter((r) => r.status === "ready");
-    const role = (ready[0] && onboardingRole(ready[0])) ?? listAgents().find((a) => !a.base_agent_id && !a.builtin);
-    if (!role) throw new Error("Create a tech-lead or coding agent first");
-    const r = createRoutine({
-      agent_id: role.id, name: MAP_ROUTINE_NAME, cron: "0 6 * * 1", timezone: defaultTimezone(), enabled: false,
-      prompt: `Refresh the repo maps. For each repo in the Repos section of your instructions: call use_repo(name), compare its map (the folder named there) with the code at origin's default branch (git log since the map's date, new or moved entry points, commands that changed), and update the files that drifted with the onboard-repo skill. Re-run the test command. Then call repo_map_done for that repo. Report what changed per repo.`,
-    }, "owner");
-    return { id: r.id, created: true };
+    const mappers = mappersOf();
+    if (!mappers.length) throw new Error("No repo has a mapper yet: map a repo first");
+    const created: string[] = [];
+    for (const m of mappers) {
+      if (mapRoutines().some((r) => r.agent_id === m.id)) continue;
+      createRoutine({
+        agent_id: m.id, name: `${MAP_ROUTINE_NAME} · ${m.name}`, cron: "0 6 * * 1", timezone: defaultTimezone(), enabled: false,
+        prompt: `Refresh the maps of the repos you map (marked "you map it" in the Repos section of your instructions). For each: call use_repo(name), compare its map (the folder named there) with the code at origin's default branch (git log since the map's date, new or moved entry points, commands that changed), and update the files that drifted with the onboard-repo skill. Re-run the test command. Then call repo_map_done for that repo. Report what changed per repo.`,
+      }, "owner");
+      created.push(m.name);
+    }
+    return { created };
   }));
 
   // --- setup requests -------------------------------------------------------------------------

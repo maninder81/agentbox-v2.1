@@ -56,9 +56,10 @@ export function messageHref(i: RoadmapItem): string | null {
   return `#/agents/${s.agent_id}${s.thread_id ? `/threads/${s.thread_id}` : ""}/m/${s.message_id}`;
 }
 const linkHref = (l: string) => (l.startsWith("/") ? `/api/file?path=${encodeURIComponent(l)}` : l);
-/** Open a step: blocked → the question; otherwise its link, else where it changed. */
+/** Open a step: blocked → the question; otherwise its link, else where it changed. A #/ link is a page here. */
 export function openStep(i: RoadmapItem, before?: () => void) {
   const msg = messageHref(i);
+  if (i.link?.startsWith("#/")) { before?.(); location.hash = i.link; return; }
   if (i.status !== "blocked" && i.link) { window.open(linkHref(i.link), "_blank", "noopener"); return; }
   if (msg) { before?.(); openMessage(msg, i.source?.message_id ?? null); return; }
   if (i.link) window.open(linkHref(i.link), "_blank", "noopener");

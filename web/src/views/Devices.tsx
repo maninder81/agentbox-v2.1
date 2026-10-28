@@ -325,6 +325,38 @@ function Gateway({ status, onChange }: { status: GatewayStatus | null; onChange:
 }
 
 export function Devices() {
+  // Without the phone gateway module none of /api/devices exists: say so, and offer to set it up.
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => { api.publicConfig().then((c) => setOn(!!c.modules.mobile)).catch(() => setOn(true)); }, []);
+  if (on === null) return <div className="page" />;
+  if (!on) return <PhoneAppOff />;
+  return <DevicesOn />;
+}
+
+function PhoneAppOff() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const setUp = async () => {
+    setBusy(true); setError(null);
+    try { location.hash = `#/helper/${(await api.integrationTask("mobile", "connect")).instance_id}`; }
+    catch (e: any) { setError(e.message); setBusy(false); }
+  };
+  return (
+    <div className="page">
+      <div className="page-inner">
+        <h1>Devices</h1>
+        <p className="lede">Phones that can reach agentbox through the mobile app, over your tailnet only.</p>
+        <div className="group-intro">
+          <p>The phone app isn't set up on this agentbox (the phone gateway is off). The helper sets it up with you: the gateway, then pairing your phone here.</p>
+          {error && <div className="error-box">{error}</div>}
+          <button className="btn primary" disabled={busy} onClick={setUp}>Set up the phone app with the helper</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DevicesOn() {
   const { devicesVersion } = useStore();
   const [devices, setDevices] = useState<{ pending: Device[]; active: Device[] } | null>(null);
   const [gateway, setGateway] = useState<GatewayStatus | null>(null);
