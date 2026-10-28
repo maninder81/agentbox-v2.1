@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { RoutineRules } from "../api.ts";
+import { roleLimits, type RoutineRules } from "../api.ts";
 import { useStore } from "../store.tsx";
 import { Icon } from "../components/ui.tsx";
 
@@ -98,7 +98,7 @@ export function RoutineRulesEditor({ rules, routineRoleId, onChange }: {
             <label htmlFor="rp-helpers">Helpers at once</label>
             <select id="rp-helpers" className="text" value={rules.perms.max_helpers ?? ""}
               onChange={(e) => setPerm("max_helpers", e.target.value === "" ? null : Number(e.target.value))}>
-              <option value="">{JOB} (up to 5 each)</option>
+              <option value="">{JOB} (up to {roleLimits.per_role} each)</option>
               {[0, 1, 2, 3, 5, 8].map((n) => <option key={n} value={n}>{n === 0 ? "None: do it yourselves" : n}</option>)}
             </select>
           </div>
